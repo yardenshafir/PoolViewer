@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.29503.13
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "PoolViewer", "PoolViewer\PoolViewer.vcxproj", "{911A68FB-82ED-4424-A8B4-5C8538AFB14F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ManagedUIKitWPF", "ManagedUIKitWPF\ManagedUIKitWPF.csproj", "{2BDAFA06-AFD9-4C7D-8B5F-0A2F418FED5F}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{911A68FB-82ED-4424-A8B4-5C8538AFB14F}.Debug|x64.ActiveCfg = Debug|x64
+		{911A68FB-82ED-4424-A8B4-5C8538AFB14F}.Debug|x64.Build.0 = Debug|x64
+		{911A68FB-82ED-4424-A8B4-5C8538AFB14F}.Release|x64.ActiveCfg = Release|x64
+		{911A68FB-82ED-4424-A8B4-5C8538AFB14F}.Release|x64.Build.0 = Release|x64
+		{2BDAFA06-AFD9-4C7D-8B5F-0A2F418FED5F}.Debug|x64.ActiveCfg = Debug|x64
+		{2BDAFA06-AFD9-4C7D-8B5F-0A2F418FED5F}.Debug|x64.Build.0 = Debug|x64
+		{2BDAFA06-AFD9-4C7D-8B5F-0A2F418FED5F}.Release|x64.ActiveCfg = Release|x64
+		{2BDAFA06-AFD9-4C7D-8B5F-0A2F418FED5F}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {41CA2BFF-5CD6-4BFB-9A77-A0E11C418938}
+	EndGlobalSection
+EndGlobal
