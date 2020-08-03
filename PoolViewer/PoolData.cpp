@@ -1125,7 +1125,7 @@ OpenDumpFile (
     Open a dmp file and get information about all the heaps
     in it and the pool blocks they manage.
 */
-int
+HRESULT
 GetPoolInformation (
     _In_ char* FilePath,
     _Outptr_ int* numberOfHeaps
@@ -1195,7 +1195,7 @@ Exit:
     {
         g_DebugControl->Release();
     }
-    return g_Heaps.size();
+    return result;
 }
 
 /*

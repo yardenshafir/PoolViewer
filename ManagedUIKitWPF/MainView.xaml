@@ -11,6 +11,7 @@
         <Menu Name="Menu"  DockPanel.Dock="Top">
             <MenuItem Header="File">
                 <MenuItem Header="Open dmp file" Click="MenuItem_Click_2"></MenuItem>
+                <MenuItem Header="Analyze live machine" Click="MenuItem_Click_6"></MenuItem>
                 <MenuItem Header="Export to csv" Click="MenuItem_Click_1"></MenuItem>
                 <MenuItem Header="Exit" Click="MenuItem_Click_5"></MenuItem>
             </MenuItem>

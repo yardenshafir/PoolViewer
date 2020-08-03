@@ -230,7 +230,7 @@ GetNextHeapInformation (
     _Outptr_ bool* Special
 );
 
-int
+HRESULT
 GetPoolInformation (
     _In_ char* FilePath,
     _Outptr_ int* numberOfHeaps

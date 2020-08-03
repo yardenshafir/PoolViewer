@@ -18,6 +18,8 @@ using System.Collections.ObjectModel;
 using System.Security.Policy;
 using System.ComponentModel;
 using System.Windows.Interop;
+using System.Security.Principal;
+using System.Diagnostics;
 
 namespace PoolViewer
 {
@@ -27,6 +29,7 @@ namespace PoolViewer
         public List<PoolBlock> poolBlocks = new List<PoolBlock> { };
         public Dictionary<string, int> tags = new Dictionary<string, int>();
         public Dictionary<string, int> subsegs = new Dictionary<string, int>();
+        public ChildWindow window = new ChildWindow();
 
         //// API Delegates
         delegate long GetPoolInformation_Ptr(string FilePath, out int res);
@@ -155,9 +158,8 @@ namespace PoolViewer
             PrintLog($"Exported pool blocks to {System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "export.csv")}.");
         }
 
-        private void MenuItem_Click_2(object sender, RoutedEventArgs e)
+        private void DisplayInfoFromDmp(int NumberOfHeaps)
         {
-            int resPtr;
             long address;
             int nodeNum;
             long allocNum;
@@ -168,124 +170,141 @@ namespace PoolViewer
             int allocSize;
             long blockAddress;
             int allocType;
+            string poolTypeStr = "Unknown";
+            string specialStr = "No";
 
+            heaps.Clear();
+            poolBlocks.Clear();
+            subsegs.Clear();
+            tags.Clear();
+
+            subsegs.Add("Lfh", 0);
+            subsegs.Add("Vs", 0);
+            subsegs.Add("Large", 0);
+            subsegs.Add("Unknown", 0);
+
+            for (int i = 0; i < NumberOfHeaps; i++)
+            {
+                GetNextHeapInformation(out address, out nodeNum, out allocNum, out poolType, out special);
+                if (special)
+                {
+                    specialStr = "Yes";
+                }
+                if (poolType == 0)
+                {
+                    poolTypeStr = "NonPagedPool";
+                }
+                else if (poolType == 1)
+                {
+                    poolTypeStr = "PagedPool";
+                }
+                else if (poolType == 512)
+                {
+                    poolTypeStr = "NonPagedPoolNx";
+                }
+                Heap h = new Heap
+                {
+                    Address = address,
+                    PoolType = poolTypeStr,
+                    NodeNumber = nodeNum,
+                    Special = specialStr,
+                    NumberOfAllocs = allocNum
+                };
+                heaps.Add(h);
+
+                //
+                // Get all pool blocks for heap
+                //
+                for (int j = 0; j < allocNum; j++)
+                {
+                    tag = GetNextAllocation(out blockAddress, out allocSize, out allocated, out allocType);
+                    if (allocSize == 0)
+                    {
+                        continue;
+                    }
+                    string subsegType = "Unknown";
+                    string isAllocated = "No";
+                    if (allocType == 0)
+                    {
+                        subsegType = "Lfh";
+                    }
+                    else if (allocType == 1)
+                    {
+                        subsegType = "Vs";
+                    }
+                    else if (allocType == 2)
+                    {
+                        subsegType = "Large";
+                    }
+                    if (allocated == true)
+                    {
+                        isAllocated = "Yes";
+                    }
+                    PoolBlock p = new PoolBlock
+                    {
+                        Address = blockAddress,
+                        Size = allocSize,
+                        SubsegType = subsegType,
+                        Tag = tag,
+                        Heap = h.Address,
+                        PoolType = h.PoolType,
+                        Special = h.Special,
+                        Allocated = isAllocated
+                    };
+                    poolBlocks.Add(p);
+                    if (!tags.ContainsKey(tag))
+                    {
+                        tags.Add(tag, 1);
+                    }
+                    else
+                    {
+                        tags[tag] += 1;
+                    }
+                    subsegs[subsegType] += 1;
+                }
+            }
+            Heaps.ItemsSource = heaps;
+            Heaps.Visibility = Visibility.Visible;
+            heapsText.Visibility = Visibility.Visible;
+            Blocks.ItemsSource = poolBlocks;
+            Blocks.Visibility = Visibility.Visible;
+
+            Dictionary<string, int> tags2 = new Dictionary<string, int>();
+            var maxTags = tags.OrderByDescending(x => x.Value);
+
+            int n = 0;
+            foreach (KeyValuePair<string, int> entry in maxTags)
+            {
+                tags2.Add(entry.Key, entry.Value);
+                n++;
+                if (n == 10)
+                {
+                    break;
+                }
+            }
+            Tags.ItemsSource = tags2;
+            Tags.Visibility = Visibility.Visible;
+            tagsText.Visibility = Visibility.Visible;
+            Subsegments.ItemsSource = subsegs;
+            Subsegments.Visibility = Visibility.Visible;
+            SubsegText.Visibility = Visibility.Visible;
+    }
+        private void MenuItem_Click_2(object sender, RoutedEventArgs e)
+        {
+            int heapNum;
+            long result;
             OpenFileDialog openFileDialog = new OpenFileDialog();
             if (openFileDialog.ShowDialog() == true)
             {
-                string poolTypeStr = "Unknown";
-                string specialStr = "No";
-                subsegs.Add("Lfh", 0);
-                subsegs.Add("Vs", 0);
-                subsegs.Add("Large", 0);
-                subsegs.Add("Unknown", 0);
                 PrintLog($"Opening file '{Path.GetFileName(openFileDialog.FileName)}'.");
-                var res = GetPoolInformation(openFileDialog.FileName.ToString(), out resPtr);
+                result = GetPoolInformation(openFileDialog.FileName.ToString(), out heapNum);
+                if (result != 0)
+                {
+                    PrintLog($"Opening dmp file failed with error {result}");
+                    return;
+                }
                 PrintLog($"File '{Path.GetFileName(openFileDialog.FileName)}' has been opened.");
-                for (int i = 0; i < resPtr; i++)
-                {
-                    GetNextHeapInformation(out address, out nodeNum, out allocNum, out poolType, out special);
-                    if (special)
-                    {
-                        specialStr = "Yes";
-                    }
-                    if (poolType == 0)
-                    {
-                        poolTypeStr = "NonPagedPool";
-                    }
-                    else if (poolType == 1)
-                    {
-                        poolTypeStr = "PagedPool";
-                    }
-                    else if (poolType == 512)
-                    {
-                        poolTypeStr = "NonPagedPoolNx";
-                    }
-                    Heap h = new Heap
-                    {
-                        Address = address,
-                        PoolType = poolTypeStr,
-                        NodeNumber = nodeNum,
-                        Special = specialStr,
-                        NumberOfAllocs = allocNum
-                    };
-                    heaps.Add(h);
-
-                    //
-                    // Get all pool blocks for heap
-                    //
-                    for (int j = 0; j < allocNum; j++)
-                    {
-                        tag = GetNextAllocation(out blockAddress, out allocSize, out allocated, out allocType);
-                        if (allocSize == 0)
-                        { 
-                            continue; 
-                        }
-                        string subsegType = "Unknown";
-                        string isAllocated = "No";
-                        if (allocType == 0)
-                        {
-                            subsegType = "Lfh";
-                        }
-                        else if (allocType == 1)
-                        {
-                            subsegType = "Vs";
-                        }
-                        else if (allocType == 2)
-                        {
-                            subsegType = "Large";
-                        }
-                        if (allocated == true)
-                        {
-                            isAllocated = "Yes";
-                        }
-                        PoolBlock p = new PoolBlock
-                        {
-                            Address = blockAddress,
-                            Size = allocSize,
-                            SubsegType = subsegType,
-                            Tag = tag,
-                            Heap = h.Address,
-                            PoolType = h.PoolType,
-                            Special = h.Special,
-                            Allocated = isAllocated
-                        };
-                        poolBlocks.Add(p);
-                        if (!tags.ContainsKey(tag))
-                        {
-                            tags.Add(tag, 1);
-                        }
-                        else
-                        {
-                            tags[tag] += 1;
-                        }
-                        subsegs[subsegType] += 1;
-                    }
-                }
-                Heaps.ItemsSource = heaps;
-                Heaps.Visibility = Visibility.Visible;
-                heapsText.Visibility = Visibility.Visible;
-                Blocks.ItemsSource = poolBlocks;
-                Blocks.Visibility = Visibility.Visible;
-
-                Dictionary<string, int> tags2 = new Dictionary<string, int>();
-                var maxTags = tags.OrderByDescending(x => x.Value);
-
-                int n = 0;
-                foreach (KeyValuePair<string, int> entry in maxTags)
-                {
-                    tags2.Add(entry.Key, entry.Value);
-                    n++;
-                    if (n == 10)
-                    {
-                        break;
-                    }
-                }
-                Tags.ItemsSource = tags2;
-                Tags.Visibility = Visibility.Visible;
-                tagsText.Visibility = Visibility.Visible;
-                Subsegments.ItemsSource = subsegs;
-                Subsegments.Visibility = Visibility.Visible;
-                SubsegText.Visibility = Visibility.Visible;
+                DisplayInfoFromDmp(heapNum);
             }
         }
 
@@ -460,6 +479,90 @@ namespace PoolViewer
         private void MenuItem_Click_5(object sender, RoutedEventArgs e)
         {
             Environment.Exit(0);
+        }
+
+        
+        public bool IsUserAdministrator()
+        {
+            bool isAdmin;
+            try
+            {
+                WindowsIdentity user = WindowsIdentity.GetCurrent();
+                WindowsPrincipal principal = new WindowsPrincipal(user);
+                isAdmin = principal.IsInRole(WindowsBuiltInRole.Administrator);
+            }
+            catch (Exception ex)
+            {
+                isAdmin = false;
+            }
+            return isAdmin;
+        }
+
+        public Label livekd = new Label();
+        public Label dmp = new Label();
+        void Window_Closed(object sender, EventArgs e)
+        {
+            int heapNum;
+            long res;
+            window.Close();
+
+            if (livekd.Content.ToString() == "")
+            {
+                PrintLog("No livekd path supplied. Can't create dmp.");
+                return;
+            }
+            if(dmp.Content.ToString() == "")
+            {
+                dmp.Content = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "live.dmp");
+            }
+            System.Diagnostics.ProcessStartInfo procStartInfo =
+                new System.Diagnostics.ProcessStartInfo(livekd.Content.ToString(), "-ml -o " + dmp.Content.ToString());
+
+            // The following commands are needed to redirect the standard output.
+            // This means that it will be redirected to the Process.StandardOutput StreamReader.
+            procStartInfo.RedirectStandardOutput = true;
+            procStartInfo.UseShellExecute = false;
+            // Do not create the black window.
+            procStartInfo.CreateNoWindow = false;
+            System.Diagnostics.Process proc = new System.Diagnostics.Process();
+            proc.StartInfo = procStartInfo;
+            proc.Start();
+            string result = proc.StandardOutput.ReadToEnd();
+            PrintLog($"res {result}");
+
+            res = GetPoolInformation(dmp.Content.ToString(), out heapNum);
+            if (res != 0)
+            {
+                PrintLog($"Failed opening dmp file with error {res}");
+                return;
+            }
+            PrintLog($"File '{Path.GetFileName(dmp.Content.ToString())}' has been opened.");
+            try
+            {
+                DisplayInfoFromDmp(heapNum);
+            }
+            catch (Exception ex)
+            {
+                PrintLog($"Exception {ex.Message}");
+            }
+        }
+        private void MenuItem_Click_6(object sender, RoutedEventArgs e)
+        {
+            var isAdmin = IsUserAdministrator();
+            if (!isAdmin)
+            {
+                MessageBox.Show("This option requires PoolViewer to run as administrator!");
+                PrintLog("Can't analyze live machine. PoolViewer must be restarted with admin rights");
+                return;
+            }
+
+            window.Notify1 += value => livekd.Content = value;
+            window.Notify2 += value => dmp.Content = value;
+            //
+            // This handler will be called when the OK button is clicked in the child window
+            //
+            window.ButtonClicked += Window_Closed;
+            window.ShowDialog();
         }
     }
 }
