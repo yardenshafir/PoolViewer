@@ -8,6 +8,7 @@ https://www.codeproject.com/Articles/5253279/Create-An-Awesome-WPF-UI-for-Your-C
 
 ## Features
 - Presents information in easy-to-use format
+- Read from memory dump or from a live machine
 - Can filter based on all fields
 - Right-click on any of the tables in the "General" tab to filter pool blocks based on chosen row
 - Export all pool blocks to csv
