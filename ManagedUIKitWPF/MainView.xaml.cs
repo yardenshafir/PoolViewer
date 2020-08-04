@@ -387,7 +387,9 @@ namespace PoolViewer
                     ((filterByAllocated == false) || ((obj.Allocated == "Yes") == allocated)) &&
                     ((filterBySpecial == false) || ((obj.Special == "Yes") == special)) &&
                     ((subseg == "") || (obj.SubsegType == subseg)))
+                {
                     e.Accepted = true;
+                }
                 else
                     e.Accepted = false;
             }
@@ -511,7 +513,9 @@ namespace PoolViewer
             sei.File = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, System.Diagnostics.Process.GetCurrentProcess().MainModule.ModuleName);
             sei.Show = SW_NORMAL;
             if (!ShellExecuteEx(ref sei))
-                throw new System.ComponentModel.Win32Exception();
+            {
+                return;
+            }
             Environment.Exit(0);
         }
         public bool IsUserAdministrator()
@@ -558,6 +562,11 @@ namespace PoolViewer
             {
                 PrintLog($"Exception {ex.Message}");
             }
+        }
+
+        private void dg_Sorting(object sender, DataGridSortingEventArgs e)
+        {
+            FilterPoolBlocks();
         }
     }
 }

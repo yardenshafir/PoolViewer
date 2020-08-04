@@ -373,6 +373,63 @@ Exit:
     return bitmapResult;
 }
 
+ULONG
+GetTagFromBigPagesTable (
+    ULONG64 Address,
+    std::string *Tag
+)
+{
+    PVOID poolTrackerBigPages;
+    ULONG64 hash;
+    UCHAR* key;
+    HRESULT result;
+    ULONG64 va;
+    ULONG64 numberOfBytes;
+    std::string tag;
+
+    poolTrackerBigPages = nullptr;
+    tag = "";
+    numberOfBytes = 0;
+
+    poolTrackerBigPages = VirtualAlloc(NULL, g_poolTrackerBigPagesSize, MEM_COMMIT, PAGE_READWRITE);
+    if (poolTrackerBigPages == nullptr)
+    {
+        goto Exit;
+    }
+    //
+    // Find the tag in PoolBigPageTable.
+    //
+
+    //
+    // Calculate the hash to find the allocation in the table.
+    //
+    hash = ((ULONG64)((ULONG)(Address >> 0xc))) * 0x9E5F;
+    hash = hash ^ (hash >> 0x20);
+    result = g_DataSpaces->ReadVirtual(
+        g_PoolBigPageTable + ((hash & (g_PoolBigPageTableSize - 1)) * g_poolTrackerBigPagesSize),
+        poolTrackerBigPages,
+        g_poolTrackerBigPagesSize,
+        nullptr);
+    if (SUCCEEDED(result))
+    {
+        //
+        // Build the tag string and get the size of the allocation.
+        //
+        va = *(ULONG64*)(((ULONG64)poolTrackerBigPages) + g_PoolTrackerBigPagesOffsets.Va);
+        key = (UCHAR*)(((ULONG64)poolTrackerBigPages) + g_PoolTrackerBigPagesOffsets.Key);
+        numberOfBytes = *(ULONG64*)(((ULONG64)poolTrackerBigPages) + g_PoolTrackerBigPagesOffsets.NumberOfBytes);
+
+        tag += *key;
+        tag += *(key + 1);
+        tag += *(key + 2);
+        tag += *(key + 3);
+        tag += '\x0';
+    }
+Exit:
+    *Tag = tag;
+    return numberOfBytes;
+}
+
 /*
     Parse the dump for information about a large pool allocation
     and add its information to the provided allocations list.
@@ -412,14 +469,6 @@ ParseLargePoolAlloc (
     //
     heapVamgrRange = VirtualAlloc(NULL, g_VamgrRangeSize, MEM_COMMIT, PAGE_READWRITE);
     if (heapVamgrRange == nullptr)
-    {
-        printf("Failed to allocate memory\n");
-        result = S_FALSE;
-        goto Exit;
-    }
-
-    poolTrackerBigPages = VirtualAlloc(NULL, g_poolTrackerBigPagesSize, MEM_COMMIT, PAGE_READWRITE);
-    if (poolTrackerBigPages == nullptr)
     {
         printf("Failed to allocate memory\n");
         result = S_FALSE;
@@ -482,32 +531,7 @@ ParseLargePoolAlloc (
     // Find the tag in PoolBigPageTable.
     //
 
-    allocation.PoolTag = "";
-    //
-    // Calculate the hash to find the allocation in the table.
-    //
-    hash = ((ULONG64)((ULONG)(Address >> 0xc))) * 0x9E5F;
-    hash = hash ^ (hash >> 0x20);
-    result = g_DataSpaces->ReadVirtual(
-        g_PoolBigPageTable + ((hash & (g_PoolBigPageTableSize - 1)) * g_poolTrackerBigPagesSize),
-        poolTrackerBigPages,
-        g_poolTrackerBigPagesSize,
-        nullptr);
-    if (SUCCEEDED(result))
-    {
-        //
-        // Build the tag string and get the size of the allocation.
-        //
-        va = *(ULONG64*)(((ULONG64)poolTrackerBigPages) + g_PoolTrackerBigPagesOffsets.Va);
-        key = (UCHAR*)(((ULONG64)poolTrackerBigPages) + g_PoolTrackerBigPagesOffsets.Key);
-        numberOfBytes = *(ULONG64*)(((ULONG64)poolTrackerBigPages) + g_PoolTrackerBigPagesOffsets.NumberOfBytes);
-
-        allocation.PoolTag += *key;
-        allocation.PoolTag += *(key + 1);
-        allocation.PoolTag += *(key + 2);
-        allocation.PoolTag += *(key + 3);
-        allocation.PoolTag += '\x0';
-    }
+    numberOfBytes = GetTagFromBigPagesTable(Address, &allocation.PoolTag);
     //
     // Either the read operation failed or the entry for this block is empty.
     // In both cases, this doesn't seem like a valid block so don't add it.
@@ -691,6 +715,7 @@ FindPoolBlocksInVsSubsegment (
     PVOID poolHeader;
     UCHAR* poolTag;
     ALLOC allocation;
+    ULONG numberOfBytes;
 
     chunkHeader = nullptr;
     poolHeader = nullptr;
@@ -761,25 +786,33 @@ FindPoolBlocksInVsSubsegment (
             + g_VsChunkHeaderSizeOffsets.AllocatedOffset)) >> 16); /* bit position: 16 */
 
         //
-        // Pool blocks don't cross page boundaries, so if UnsafeSize is larger
-        // than the space that's left until the end of the page, this is not
-        // an actual allocation so move on to the next one.
+        // Allocation data doesn't cross page boundaries, so if UnsafeSize is
+        // larger than the space that's left until the end of the page, this is
+        // not an actual allocation so move on to the next one.
+        // But there are blocks where the chunk header + pool header are right
+        //  before page break and the data is immediately after and those seem fine.
         //
-        if (allocated && (0x1000 - (chunkHeaderKernelAddress & 0xfff) >= unsafeSize))
+        if (allocated &&
+            ((0x1000 - (chunkHeaderKernelAddress & 0xfff) >= unsafeSize) ||
+                (0x1000 - (chunkHeaderKernelAddress & 0xfff) <= (g_vsChunkHeaderSize + g_poolHeaderSize))))
         {
             //
             // Collect information for the block.
             //
-            allocation.Address = chunkHeaderKernelAddress + g_vsChunkHeaderSize;
-            allocation.Size = unsafeSize;
+            allocation.Address = chunkHeaderKernelAddress + g_vsChunkHeaderSize + g_poolHeaderSize;
+            allocation.Size = unsafeSize - g_vsChunkHeaderSize;
             allocation.Allocated = allocated;
             allocation.PoolTag = "";
             allocation.Type = Vs;
 
+            if (unsafeSize >= 0x9F8)
+            {
+                numberOfBytes = GetTagFromBigPagesTable(allocation.Address, &allocation.PoolTag);
+            }
             //
             // Get pool header
             //
-            if (SUCCEEDED(g_DataSpaces->ReadVirtual(chunkHeaderKernelAddress + g_vsChunkHeaderSize, poolHeader, g_poolHeaderSize, nullptr)))
+            else if (SUCCEEDED(g_DataSpaces->ReadVirtual(chunkHeaderKernelAddress + g_vsChunkHeaderSize, poolHeader, g_poolHeaderSize, nullptr)))
             {
                 poolTag = (UCHAR*)((ULONG64)poolHeader + g_PoolHeaderOffsets.PoolTagOffset);
                 //

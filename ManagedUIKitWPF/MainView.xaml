@@ -107,7 +107,7 @@
                     </ComboBox>
 
                     <Button Margin="10,35,5,5" Width="100" Height="21" HorizontalAlignment="Left" VerticalAlignment="Top" Click="Search_Button_Click" FontWeight="Bold">Search</Button>
-                    <DataGrid Name = "Blocks" HorizontalAlignment="Left" VerticalAlignment="Top" MaxHeight="400" Margin="10,90,0,0" AutoGenerateColumns="False" Visibility="Hidden">
+                    <DataGrid Name = "Blocks"  Sorting="dg_Sorting" HorizontalAlignment="Left" VerticalAlignment="Top" MaxHeight="400" Margin="10,90,0,0" AutoGenerateColumns="False" Visibility="Hidden">
                         <DataGrid.Columns>
                             <DataGridTextColumn Binding="{Binding Path=Address, StringFormat={}0x{0:X8}}" Header="Address" FontWeight="Bold"/>
                             <DataGridTextColumn Binding="{Binding Path=Heap, StringFormat={}0x{0:X8}}" Header="Heap"/>
