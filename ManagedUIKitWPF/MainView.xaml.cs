@@ -20,6 +20,7 @@ using System.ComponentModel;
 using System.Windows.Interop;
 using System.Security.Principal;
 using System.Diagnostics;
+using System.Windows.Threading;
 
 namespace PoolViewer
 {
@@ -29,10 +30,9 @@ namespace PoolViewer
         public List<PoolBlock> poolBlocks = new List<PoolBlock> { };
         public Dictionary<string, int> tags = new Dictionary<string, int>();
         public Dictionary<string, int> subsegs = new Dictionary<string, int>();
-        public ChildWindow window = new ChildWindow();
 
         //// API Delegates
-        delegate long GetPoolInformation_Ptr(string FilePath, out int res);
+        delegate long GetPoolInformation_Ptr(string FilePath, bool CreateLiveDump, out int res);
         delegate bool GetNextHeapInformation_Ptr(out Int64 Address, out int NodeNumber, out long NumberOfAllocations, out int PoolType, out bool Special);
         delegate string GetNextAllocation_Ptr(out Int64 Address, out int Size, out bool Allocated, out int Type);
 
@@ -84,7 +84,7 @@ namespace PoolViewer
         void PrintLog(string log_input)
         {
             LogView.Text += $"[{DateTime.Now.ToShortTimeString()}] :: {log_input}\r\n";
-            LogView.ScrollToEnd();
+            Dispatcher.Invoke(() => { LogView.ScrollToEnd(); }, DispatcherPriority.ContextIdle);
         }
 
         public MainView(IntPtr api_1_ptr, IntPtr api_2_ptr, IntPtr api_3_ptr)
@@ -297,7 +297,7 @@ namespace PoolViewer
             if (openFileDialog.ShowDialog() == true)
             {
                 PrintLog($"Opening file '{Path.GetFileName(openFileDialog.FileName)}'.");
-                result = GetPoolInformation(openFileDialog.FileName.ToString(), out heapNum);
+                result = GetPoolInformation(openFileDialog.FileName.ToString(), false, out heapNum);
                 if (result != 0)
                 {
                     PrintLog($"Opening dmp file failed with error {result}");
@@ -475,13 +475,45 @@ namespace PoolViewer
                 Pools.SelectedIndex++;
             }
         }
-
         private void MenuItem_Click_5(object sender, RoutedEventArgs e)
         {
             Environment.Exit(0);
         }
 
-        
+        [Serializable]
+        public struct ShellExecuteInfo
+        {
+            public int Size;
+            public uint Mask;
+            public IntPtr hwnd;
+            public string Verb;
+            public string File;
+            public string Parameters;
+            public string Directory;
+            public uint Show;
+            public IntPtr InstApp;
+            public IntPtr IDList;
+            public string Class;
+            public IntPtr hkeyClass;
+            public uint HotKey;
+            public IntPtr Icon;
+            public IntPtr Monitor;
+        }
+
+        [DllImport("shell32.dll", SetLastError = true)]
+        extern public static bool ShellExecuteEx(ref ShellExecuteInfo lpExecInfo);
+        public void RunAsAdmin()
+        {
+            const uint SW_NORMAL = 1;
+            ShellExecuteInfo sei = new ShellExecuteInfo();
+            sei.Size = Marshal.SizeOf(sei);
+            sei.Verb = "runas";
+            sei.File = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, System.Diagnostics.Process.GetCurrentProcess().MainModule.ModuleName);
+            sei.Show = SW_NORMAL;
+            if (!ShellExecuteEx(ref sei))
+                throw new System.ComponentModel.Win32Exception();
+            Environment.Exit(0);
+        }
         public bool IsUserAdministrator()
         {
             bool isAdmin;
@@ -497,46 +529,27 @@ namespace PoolViewer
             }
             return isAdmin;
         }
-
-        public Label livekd = new Label();
-        public Label dmp = new Label();
-        void Window_Closed(object sender, EventArgs e)
+        private void MenuItem_Click_6(object sender, RoutedEventArgs e)
         {
             int heapNum;
             long res;
-            window.Close();
-
-            if (livekd.Content.ToString() == "")
+            var isAdmin = IsUserAdministrator();
+            if (!isAdmin)
             {
-                PrintLog("No livekd path supplied. Can't create dmp.");
+                RunAsAdmin();
+                PrintLog("Failed to open PoolViewer as admin. Can't analyze machine.");
                 return;
             }
-            if(dmp.Content.ToString() == "")
-            {
-                dmp.Content = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "live.dmp");
-            }
-            System.Diagnostics.ProcessStartInfo procStartInfo =
-                new System.Diagnostics.ProcessStartInfo(livekd.Content.ToString(), "-ml -o " + dmp.Content.ToString());
 
-            // The following commands are needed to redirect the standard output.
-            // This means that it will be redirected to the Process.StandardOutput StreamReader.
-            procStartInfo.RedirectStandardOutput = true;
-            procStartInfo.UseShellExecute = false;
-            // Do not create the black window.
-            procStartInfo.CreateNoWindow = false;
-            System.Diagnostics.Process proc = new System.Diagnostics.Process();
-            proc.StartInfo = procStartInfo;
-            proc.Start();
-            string result = proc.StandardOutput.ReadToEnd();
-            PrintLog($"res {result}");
-
-            res = GetPoolInformation(dmp.Content.ToString(), out heapNum);
+            var filePath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "live.dmp");
+            PrintLog("Creating dump file of the current machine. This can take a few minutes.");
+            res = GetPoolInformation(filePath, true, out heapNum);
             if (res != 0)
             {
                 PrintLog($"Failed opening dmp file with error {res}");
                 return;
             }
-            PrintLog($"File '{Path.GetFileName(dmp.Content.ToString())}' has been opened.");
+            PrintLog($"File '{filePath}' has been opened.");
             try
             {
                 DisplayInfoFromDmp(heapNum);
@@ -545,24 +558,6 @@ namespace PoolViewer
             {
                 PrintLog($"Exception {ex.Message}");
             }
-        }
-        private void MenuItem_Click_6(object sender, RoutedEventArgs e)
-        {
-            var isAdmin = IsUserAdministrator();
-            if (!isAdmin)
-            {
-                MessageBox.Show("This option requires PoolViewer to run as administrator!");
-                PrintLog("Can't analyze live machine. PoolViewer must be restarted with admin rights");
-                return;
-            }
-
-            window.Notify1 += value => livekd.Content = value;
-            window.Notify2 += value => dmp.Content = value;
-            //
-            // This handler will be called when the OK button is clicked in the child window
-            //
-            window.ButtonClicked += Window_Closed;
-            window.ShowDialog();
         }
     }
 }

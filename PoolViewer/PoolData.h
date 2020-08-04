@@ -1,4 +1,5 @@
 #include <Windows.h>
+#include <winternl.h>
 #include <list>
 
 #pragma once
@@ -210,6 +211,58 @@ struct HEAP
 };
 
 //
+// structs needed to create live dmp
+//
+
+typedef union _SYSDBG_LIVEDUMP_CONTROL_FLAGS
+{
+    struct
+    {
+        ULONG UseDumpStorageStack : 1;
+        ULONG CompressMemoryPagesData : 1;
+        ULONG IncludeUserSpaceMemoryPages : 1;
+        ULONG Reserved : 29;
+    };
+    ULONG AsUlong;
+} SYSDBG_LIVEDUMP_CONTROL_FLAGS;
+
+typedef union _SYSDBG_LIVEDUMP_CONTROL_ADDPAGES
+{
+    struct
+    {
+        ULONG HypervisorPages : 1;
+        ULONG Reserved : 31;
+    };
+    ULONG AsUlong;
+} SYSDBG_LIVEDUMP_CONTROL_ADDPAGES;
+
+typedef struct _SYSDBG_LIVEDUMP_CONTROL
+{
+    ULONG Version;
+    ULONG BugCheckCode;
+    ULONG_PTR BugCheckParam1;
+    ULONG_PTR BugCheckParam2;
+    ULONG_PTR BugCheckParam3;
+    ULONG_PTR BugCheckParam4;
+    PVOID DumpFileHandle;
+    PVOID CancelEventHandle;
+    SYSDBG_LIVEDUMP_CONTROL_FLAGS Flags;
+    SYSDBG_LIVEDUMP_CONTROL_ADDPAGES AddPagesControl;
+} SYSDBG_LIVEDUMP_CONTROL, * PSYSDBG_LIVEDUMP_CONTROL;
+
+typedef
+NTSTATUS
+(__stdcall*
+    NtSystemDebugControl) (
+        ULONG ControlCode,
+        PVOID InputBuffer,
+        ULONG InputBufferLength,
+        PVOID OutputBuffer,
+        ULONG OutputBufferLength,
+        PULONG ReturnLength
+        );
+
+//
 // Externally-used functions
 //
 
@@ -233,5 +286,6 @@ GetNextHeapInformation (
 HRESULT
 GetPoolInformation (
     _In_ char* FilePath,
+    _In_ bool CreateLiveDump,
     _Outptr_ int* numberOfHeaps
 );
