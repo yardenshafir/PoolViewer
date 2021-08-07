@@ -20,3 +20,5 @@ The ones in System32 are often broken, so copy the dlls from the same folder win
 
 The app parses a memory dmp of a Windows 10 RS5+ machine, which can be created with livekd:
 `livekd.exe -ml -k <path to kd.exe> -o c:\temp\live.dmp`
+
+Another option is analyzing the live machine - this is done by creating a temporary dmp file of the live machine and analyzing it. This option requires running PoolViewer as admin.
