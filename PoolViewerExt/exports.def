@@ -1,0 +1,6 @@
+EXPORTS
+    DebugExtensionInitialize
+    DebugExtensionUninitialize
+    DebugExtensionNotify
+    help
+	poolview

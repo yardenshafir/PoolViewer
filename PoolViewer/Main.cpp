@@ -1,7 +1,9 @@
 #include <iostream>
 #include <Windows.h>
 #include "resource.h"
-#include "PoolData.h"
+#include "..\PoolData\PoolData.h"
+
+#pragma once
 
 //
 // Global Objects

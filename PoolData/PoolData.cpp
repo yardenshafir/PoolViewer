@@ -1,13 +1,15 @@
 #include <windows.h>
 #include <winternl.h>
-#include <DbgEng.h>
-#include <stdio.h>
-#include <iostream>
 #include <list>
 #include <iterator>
 #include "PoolData.h"
 
 using namespace std;
+
+PDEBUG_CLIENT g_DebugClient = nullptr;
+PDEBUG_SYMBOLS g_DebugSymbols = nullptr;
+PDEBUG_DATA_SPACES4 g_DataSpaces = nullptr;
+PDEBUG_CONTROL g_DebugControl = nullptr;
 
 #define ALIGN_DOWN_POINTER_BY(address, alignment) \
     ((PVOID)((ULONG_PTR)(address) & ~((ULONG_PTR)(alignment) - 1)))
@@ -17,11 +19,6 @@ using namespace std;
 
 #define CONTROL_KERNEL_DUMP 37
 static NtSystemDebugControl g_NtSystemDebugControl = NULL;
-
-IDebugClient* g_DebugClient = nullptr;
-IDebugSymbols* g_DebugSymbols = nullptr;
-IDebugDataSpaces* g_DataSpaces = nullptr;
-IDebugControl* g_DebugControl = nullptr;
 
 ULONG64 g_HeapKey;
 ULONG64 g_LfhKey;
@@ -106,7 +103,9 @@ ULONG g_RtlRbTreeSize;
     find the necessary types in each function.
 */
 HRESULT
-GetTypes ()
+GetTypes (
+    void
+    )
 {
     if ((!SUCCEEDED(g_DataSpaces->ReadDebuggerData(DEBUG_DATA_KernBase, &g_KernBase, sizeof(g_KernBase), nullptr))) ||
         (!SUCCEEDED(g_DebugSymbols->GetTypeId(g_KernBase, "_RTLP_HP_HEAP_GLOBALS", &RTLP_HP_HEAP_GLOBALS))) ||
@@ -144,7 +143,9 @@ GetTypes ()
     Initializes all the sizes of structures that this tool uses as globals.
 */
 HRESULT
-GetSizes ()
+GetSizes (
+    void
+    )
 {
     if ((!SUCCEEDED(g_DebugSymbols->GetTypeSize(g_KernBase, HEAP_PAGE_SEGMENT, &g_HeapPageSegSize))) ||
         (!SUCCEEDED(g_DebugSymbols->GetTypeSize(g_KernBase, HEAP_PAGE_RANGE_DESCRIPTOR, &g_RangeDescriptorSize))) ||
@@ -169,7 +170,9 @@ GetSizes ()
     Initialize HeapKey and LfhKey.
 */
 HRESULT
-GetHeapGlobals ()
+GetHeapGlobals (
+    void
+    )
 {
     HRESULT result;
     ULONG64 heapGlobals;
@@ -219,7 +222,9 @@ Exit:
     Get offsets for all the structures that this tool uses.
 */
 HRESULT
-GetOffsets ()
+GetOffsets (
+    void
+    )
 {
     if ((!SUCCEEDED(g_DebugSymbols->GetOffsetByName("nt!ExPoolState", &g_PoolState))) ||
         (!SUCCEEDED(g_DebugSymbols->GetOffsetByName("nt!PoolBigPageTable", &g_PoolBigPageTableOffset))) ||
@@ -250,7 +255,9 @@ GetOffsets ()
         (!SUCCEEDED(g_DebugSymbols->GetFieldOffset(g_KernBase, HEAP_PAGE_SEGMENT, "ListEntry", &g_PageSegmentOffsets.ListEntryOffset))) ||
         (!SUCCEEDED(g_DebugSymbols->GetFieldOffset(g_KernBase, HEAP_PAGE_SEGMENT, "Signature", &g_PageSegmentOffsets.SignatureOffset))) ||
         (!SUCCEEDED(g_DebugSymbols->GetFieldOffset(g_KernBase, HEAP_PAGE_SEGMENT, "DescArray", &g_PageSegmentOffsets.DescArrayOffset))) ||
+        (!SUCCEEDED(g_DebugSymbols->GetFieldOffset(g_KernBase, HEAP_PAGE_SEGMENT, "SegmentCommitState", &g_PageSegmentOffsets.SegmentCommitStateOffset))) ||
         (!SUCCEEDED(g_DebugSymbols->GetFieldOffset(g_KernBase, HEAP_PAGE_RANGE_DESCRIPTOR, "RangeFlags", &g_PageRangeDescriptorOffsets.RangeFlagsOffset))) ||
+        (!SUCCEEDED(g_DebugSymbols->GetFieldOffset(g_KernBase, HEAP_PAGE_RANGE_DESCRIPTOR, "TreeSignature", &g_PageRangeDescriptorOffsets.TreeSignatureOffset))) ||
         (!SUCCEEDED(g_DebugSymbols->GetFieldOffset(g_KernBase, HEAP_PAGE_RANGE_DESCRIPTOR, "UnitSize", &g_PageRangeDescriptorOffsets.UnitSizeOffset))) ||
         (!SUCCEEDED(g_DebugSymbols->GetFieldOffset(g_KernBase, SEGMENT_HEAP, "SegContexts", &g_SegmentHeapOffsets.SegContextsOffsets))) ||
         (!SUCCEEDED(g_DebugSymbols->GetFieldOffset(g_KernBase, SEGMENT_HEAP, "LargeAllocMetadata", &g_SegmentHeapOffsets.LargeAllocMetadataOffset))) ||
@@ -280,7 +287,39 @@ GetOffsets ()
         return S_FALSE;
     }
 
-    return S_OK;;
+    return S_OK;
+}
+
+/*
+    Validates the region that is about to be read and reads it.
+*/
+HRESULT
+ReadData (
+    _In_ ULONG64 Address,
+    _In_ ULONG Size,
+    _Out_ PVOID Buffer
+)
+{
+    HRESULT result;
+    ULONG64 validBase;
+    ULONG validSize;
+
+    result = g_DataSpaces->GetValidRegionVirtual(Address,
+                                                 Size,
+                                                 &validBase,
+                                                 &validSize);
+    if (result != S_OK)
+    {
+        return result;
+    }
+    if (validBase != Address)
+    {
+        return S_FALSE;
+    }
+    return g_DataSpaces->ReadVirtual(Address,
+                                     Buffer,
+                                     Size,
+                                     nullptr);
 }
 
 /*
@@ -319,8 +358,9 @@ BitmapBitmaskRead (
     if ((!SUCCEEDED(g_DataSpaces->ReadVirtual(
             baseAddressAddress, &baseAddress, sizeof(baseAddress), nullptr))) ||
         (!SUCCEEDED(g_DebugSymbols->ReadTypedDataVirtual(
-            allocTrackerAddress, g_KernBase, RTL_CSPARSE_BITMAP, (PVOID)SBitmap, sizeof(SBitmap), NULL))))
+            allocTrackerBitmapAddress, g_KernBase, RTL_CSPARSE_BITMAP, (PVOID)SBitmap, sizeof(SBitmap), NULL))))
     {
+        g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Failed reading bitmap base\n", __FUNCTIONW__, __LINE__);
         result = S_FALSE;
         goto Exit;
     }
@@ -346,6 +386,7 @@ BitmapBitmaskRead (
                 sizeof(commitBitmapValue),
                 nullptr)))
         {
+            g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Failed reading commit bitmap\n", __FUNCTIONW__, __LINE__);
             result = S_FALSE;
             goto Exit;
         }
@@ -354,18 +395,18 @@ BitmapBitmaskRead (
         //
         if (_bittest64(&commitBitmapValue, (bitIndex >> 15) % 8))
         {
-            state = UserBitmapValid;
+            state = RTLP_CSPARSE_BITMAP_STATE::UserBitmapValid;
         }
         else
         {
-            state = UserBitmapInvalid;
+            state = RTLP_CSPARSE_BITMAP_STATE::UserBitmapInvalid;
         }
     }
     else
     {
-        state = CommitBitmapInvalid;
+        state = RTLP_CSPARSE_BITMAP_STATE::CommitBitmapInvalid;
     }
-    if (state == UserBitmapValid)
+    if (state == RTLP_CSPARSE_BITMAP_STATE::UserBitmapValid)
     {
         //
         // We need to read the address in SBitmap->UserBitmap and then we need
@@ -379,6 +420,7 @@ BitmapBitmaskRead (
                 sizeof(userBitmapValue),
                 nullptr)))
         {
+            g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Failed reading user bitmap\n", __FUNCTIONW__, __LINE__);
             result = S_FALSE;
             goto Exit;
         }
@@ -393,10 +435,13 @@ Exit:
     return bitmapResult;
 }
 
+/*
+    Retrieves a pool tag for a big pool allocation from the big pages table.
+*/
 ULONG
 GetTagFromBigPagesTable (
-    ULONG64 Address,
-    std::string *Tag
+    _In_ ULONG64 Address,
+    _Out_ std::string *Tag
 )
 {
     PVOID poolTrackerBigPages;
@@ -461,7 +506,7 @@ GetTagFromBigPagesTable (
             }
         }
         key = (UCHAR*)(((ULONG64)poolTrackerBigPages) + g_PoolTrackerBigPagesOffsets.Key);
-        numberOfBytes = *(ULONG64*)(((ULONG64)poolTrackerBigPages) + g_PoolTrackerBigPagesOffsets.NumberOfBytes);
+        numberOfBytes = *(ULONG*)(((ULONG64)poolTrackerBigPages) + g_PoolTrackerBigPagesOffsets.NumberOfBytes);
 
         tag += *key;
         tag += *(key + 1);
@@ -475,6 +520,163 @@ Exit:
 }
 
 /*
+    Prints information about a pool block to the debugger console.
+
+    @param[in] Address - Base address of the block
+    @param[in] Size - Size of the block
+    @param[in] Allocated - Is the block allocated or free
+    @param[in] Type - Subsegment type (Vs, Lfh, Big, Large)
+    @param[in,opt] PoolHeaderAddress - Address to search for the pool header.
+        Only needed for blocks smaller than 0xFF8.
+        Needs to be sent by the caller because it can slightly change based on the
+        type and alignment of the pool block.
+    @param[in] Highlight - If set to TRUE function will mark the allocation with *
+    @param[in,opt] - Optional pool tag. Block will only be printed if it has a matching pool tag.
+*/
+HRESULT PrintInfoForSingleBlock (
+    _In_ ULONG64 Address,
+    _In_ ULONG Size,
+    _In_ BOOLEAN Allocated,
+    _In_ ALLOCATION_TYPE Type,
+    _In_opt_ ULONG64 PoolHeaderAddress,
+    _In_ BOOLEAN Highlight,
+    _In_opt_ PCSTR Tag,
+    _Out_opt_ std::list<ALLOC>* Allocations
+    )
+{
+    HRESULT result;
+    ALLOC allocation;
+    ULONG numberOfBytes;
+    UCHAR* poolTag;
+    ULONG64 poolHeaderAddress;
+    PVOID poolHeader = nullptr;
+    std::string spaces;
+    std::string type;
+    result = S_OK;
+
+    poolHeader = VirtualAlloc(NULL, g_poolHeaderSize, MEM_COMMIT, PAGE_READWRITE);
+    if (poolHeader == nullptr)
+    {
+        g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Failed to allocate pool header\n", __FUNCTIONW__, __LINE__);
+        result = S_FALSE;
+        goto Exit;
+    }
+    //
+    // Collect information for the block.
+    //
+    allocation.Address = Address;
+    allocation.Size = Size;
+    allocation.Allocated = Allocated;
+    allocation.PoolTag = "";
+    allocation.Type = Type;
+
+    allocation.PoolTag = "    ";
+    allocation.PoolTag += '\x0';
+
+    if (Size >= 0xFF8)
+    {
+        allocation.PoolTag = "";
+        numberOfBytes = GetTagFromBigPagesTable(allocation.Address, &allocation.PoolTag);
+    }
+    //
+    // Get pool header
+    //
+    else if (PoolHeaderAddress != 0)
+    {
+        //
+        // The pool header is never on the last 0x10 bytes of a page.
+        // If the chunk header ends at 0x...ff0, the pool header will be in the beginning
+        // of the next page.
+        //
+        poolHeaderAddress = PoolHeaderAddress;
+        if (0x1000 - (poolHeaderAddress & 0xfff) == 0x10)
+        {
+            poolHeaderAddress += 0x10;
+            allocation.Size -= 0x10;
+            allocation.Address += 0x10;
+        }
+        if (SUCCEEDED(g_DataSpaces->ReadVirtual(poolHeaderAddress, poolHeader, g_poolHeaderSize, nullptr)))
+        {
+            poolTag = (UCHAR*)((ULONG64)poolHeader + g_PoolHeaderOffsets.PoolTagOffset);
+            //
+            // Get the Tag from the pool header and build the tag string.
+            //If pool tag has 0xffff..., this has a pointer instead of a tag, ignore.
+            //
+            if ((*(poolTag + 2) != 0xff) && (*(poolTag + 3) != 0xff) && (*(poolTag + 2) != 0) && (*(poolTag + 3) != 0))
+            {
+                allocation.PoolTag = "";
+                allocation.PoolTag += *poolTag;
+                allocation.PoolTag += *(poolTag + 1);
+                allocation.PoolTag += *(poolTag + 2);
+                allocation.PoolTag += *(poolTag + 3);
+                allocation.PoolTag += '\x0';
+            }
+        }
+    }
+
+    if (Tag)
+    {
+        for (int i = 0; i < strlen(Tag); i++)
+        {
+            if (allocation.PoolTag[i] != Tag[i])
+            {
+                goto Exit;
+            }
+        }
+    }
+
+    spaces = "";
+    for (int i = allocation.Size; i < 0x10000; i *= 0x10)
+    {
+        spaces += " ";
+    }
+    spaces += '\x0';
+
+    type = "";
+    if (Type == ALLOCATION_TYPE::Vs)
+    {
+        type = "Vs";
+    }
+    else if (Type == ALLOCATION_TYPE::Lfh)
+    {
+        type = "Lfh";
+    }
+    else if (Type == ALLOCATION_TYPE::Big)
+    {
+        type = "Big";
+    }
+    else if (Type == ALLOCATION_TYPE::Large)
+    {
+        type = "Large";
+    }
+    else
+    {
+        type = "Unknown";
+    }
+    type += '\x0';
+
+    g_DebugControl->Output(DEBUG_OUTPUT_DEBUGGEE, "%s 0x%p   0x%x %s   %s   %s   %s\n",
+                           Highlight ? "*" : " ",
+                           allocation.Address,
+                           allocation.Size,
+                           spaces.c_str(),
+                           allocation.Allocated ? "(Allocated)" : "(Free)     ",
+                           allocation.PoolTag.c_str(),
+                           type.c_str());
+    if (Allocations)
+    {
+        Allocations->push_back(allocation);
+    }
+
+Exit:
+    if (poolHeader != nullptr)
+    {
+        VirtualFree(poolHeader, NULL, MEM_RELEASE);
+    }
+    return result;
+}
+
+/*
     Parse the dump for information about a large pool allocation
     and add its information to the provided allocations list.
 */
@@ -482,30 +684,24 @@ BOOLEAN
 ParseLargePoolAlloc (
     _In_ ULONG64 Address,
     _In_ BOOLEAN LargePool,
-    _Out_ std::list<ALLOC>* Allocations
-)
+    _Out_opt_ std::list<ALLOC>* Allocations,
+    _In_opt_ PCSTR Tag
+    )
 {
     HRESULT result;
     PVOID heapVamgrRange;
     BOOLEAN bitmapResult;
     ULONG elementSizeShift;
     ULONG64 baseAddress;
-    ULONG64* UserBitmap;
     ULONG64 bitIndex;
     ULONG64 userBitmapValue;
     ULONG64 elementSizeShiftAddress;
     ULONG64 baseAddressAddress;
     ULONG64 userBitmapAddress;
-    PVOID poolTrackerBigPages;
-    ULONG64 hash;
-    UCHAR* key;
-    ULONG64 va;
     ULONG64 numberOfBytes;
     ALLOC allocation;
-    std::string tag;
 
     heapVamgrRange = nullptr;
-    poolTrackerBigPages = nullptr;
     bitmapResult = FALSE;
     numberOfBytes = 0;
 
@@ -515,7 +711,7 @@ ParseLargePoolAlloc (
     heapVamgrRange = VirtualAlloc(NULL, g_VamgrRangeSize, MEM_COMMIT, PAGE_READWRITE);
     if (heapVamgrRange == nullptr)
     {
-        printf("Failed to allocate memory\n");
+        g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "Failed to allocate memory\n");
         result = S_FALSE;
         goto Exit;
     }
@@ -586,6 +782,15 @@ ParseLargePoolAlloc (
         goto Exit;
     }
 
+    PrintInfoForSingleBlock(Address,
+                            numberOfBytes,
+                            bitmapResult,
+                            LargePool ? ALLOCATION_TYPE::Large : ALLOCATION_TYPE::Big,
+                            0,
+                            FALSE,
+                            Tag,
+                            Allocations);
+
     //
     // Add this allocation to the list.
     //
@@ -593,11 +798,11 @@ ParseLargePoolAlloc (
     allocation.Size = numberOfBytes;
     if (LargePool)
     {
-        allocation.Type = Large;
+        allocation.Type = ALLOCATION_TYPE::Large;
     }
     else
     {
-        allocation.Type = Big;
+        allocation.Type = ALLOCATION_TYPE::Big;
     }
     allocation.Allocated = bitmapResult;
     Allocations->push_back(allocation);
@@ -607,19 +812,22 @@ Exit:
     {
         VirtualFree(heapVamgrRange, NULL, MEM_RELEASE);
     }
-    if (poolTrackerBigPages != nullptr)
-    {
-        VirtualFree(poolTrackerBigPages, NULL, MEM_RELEASE);
-    }
     return bitmapResult;
 }
 
+/*
+    Iterates over the tree of large pool allocations and prints them.
+    Can receive a pool tag and will only print blocks with a matching tag.
+
+    Allocations remained from PoolViewer and is not used. Can be ignored for now.
+*/
 VOID IterateOverLargeAllocTree (
     _In_ ULONG64 CurrentEntryAddr,
     _In_ ULONG64 RootAddrForDecode,
     _In_ BOOLEAN Encoded,
-    _In_ std::list<ALLOC>* Allocations
-)
+    _In_ std::list<ALLOC>* Allocations,
+    _In_opt_ PCSTR Tag
+    )
 {
     PVOID heapLargeAlloc;
     ULONG64 right;
@@ -654,7 +862,7 @@ VOID IterateOverLargeAllocTree (
     // Get information about current entry and add to Allocations list
     //
     va = *(ULONG64*)((ULONG64)heapLargeAlloc + g_HeapLargeAllocDataOffsets.VirtualAddressOffset);
-    ParseLargePoolAlloc(va, true, Allocations);
+    ParseLargePoolAlloc(va, true, Allocations, Tag);
 
     //
     // Get children
@@ -664,11 +872,11 @@ VOID IterateOverLargeAllocTree (
 
     if (left != 0)
     {
-        IterateOverLargeAllocTree(left, RootAddrForDecode, Encoded, Allocations);
+        IterateOverLargeAllocTree(left, RootAddrForDecode, Encoded, Allocations, Tag);
     }
     if (right != 0)
     {
-        IterateOverLargeAllocTree(right, RootAddrForDecode, Encoded, Allocations);
+        IterateOverLargeAllocTree(right, RootAddrForDecode, Encoded, Allocations, Tag);
     }
 Exit:
     if (heapLargeAlloc != nullptr)
@@ -677,10 +885,17 @@ Exit:
     }
 }
 
+/*
+    Finds all large pool blocks and prints them.
+    Can receive a pool tag and will only print blocks with a matching tag.
+
+    Allocations remained from PoolViewer and is not used. Can be ignored for now.
+*/
 VOID ParseLargePages (
     _In_ ULONG64 Heap,
-    _In_ std::list<ALLOC>* Allocations
-)
+    _In_ std::list<ALLOC>* Allocations,
+    _In_opt_ PCSTR Tag
+    )
 {
     PVOID largeAllocMetadata;
     ULONG64 largeAllocMedatadaAddr;
@@ -716,7 +931,7 @@ VOID ParseLargePages (
     //
     heapLargeAllocAddr = root - g_HeapLargeAllocDataOffsets.TreeNodeOffset;
     encoded = _bittest64((LONG64*)((ULONG64)largeAllocMetadata + g_RtlRbTreeOffsets.EncodedOffset), 0);
-    IterateOverLargeAllocTree(heapLargeAllocAddr, largeAllocMedatadaAddr, encoded, Allocations);
+    IterateOverLargeAllocTree(heapLargeAllocAddr, largeAllocMedatadaAddr, encoded, Allocations, Tag);
 
 Exit:
     if (largeAllocMetadata != nullptr)
@@ -727,13 +942,24 @@ Exit:
 
 /*
     Parse the supplied LFH subsegment to get all the pool blocks in it
-    and add them to the Allocations list.
+    and print them as needed.
+
+    @param[in] LfhSubsegment - Beginning of an LFH subsegment
+    @param[in] SubsegmentEnd - End of an LFH subsegment
+    @param[in] Allocations - Left over from PoolViewer, can be ignored for now.
+    @param[in,opt] Address - A specific address to search for.
+        If supplied, only blocks in the page containing Address will be printed
+        and the block containing the requested address will be marked with *.
+    @param[in,opt] Tag - Optional pool tag. If supplied, only blocks with a matching
+        pool tag will be printed.
 */
-VOID
+HRESULT
 FindPoolBlocksInLfhSubsegment (
     _In_ PVOID LfhSubsegment,
     _In_ PVOID SubsegmentEnd,
-    _In_ std::list<ALLOC>* Allocations
+    _In_opt_ std::list<ALLOC>* Allocations,
+    _In_opt_ PVOID Address,
+    _In_opt_ PCSTR Tag
 )
 {
     HRESULT result;
@@ -742,27 +968,47 @@ FindPoolBlocksInLfhSubsegment (
     USHORT lfhBlockSize;
     USHORT lfhFirstEntryOffset;
     ULONG64 currentAddress;
-    PVOID poolHeader;
-    UCHAR* poolTag;
     UCHAR bitmapResult;
     ULONG offsetInSubseg;
     ULONG indexInBitmap;
     PVOID bitmap;
     ALLOC allocation;
+    ULONG64 encodedDataAddress;
+    ULONG64 validBase;
+    ULONG validSize;
 
-    poolHeader = nullptr;
     bitmap = nullptr;
+    result = S_OK;
+
+    //
+    // It is possible that only some pages in the subsegment are used,
+    // so check that actual used size and don't try to access invalid pages.
+    //
+    result = g_DataSpaces->GetValidRegionVirtual(
+        (ULONG64)LfhSubsegment,
+        (ULONG)((ULONG64)SubsegmentEnd - (ULONG64)LfhSubsegment),
+        &validBase,
+        &validSize);
+
+    if ((ULONG64)LfhSubsegment != validBase)
+    {
+        result = S_FALSE;
+        goto Exit;
+    }
+
+    if ((ULONG64)SubsegmentEnd - (ULONG64)LfhSubsegment > validSize)
+    {
+        SubsegmentEnd = (PVOID)(validBase + validSize);
+    }
 
     //
     // Read the HEAP_PAGE_SUBSEGMENT encodedData.
     //
-    if ((!SUCCEEDED(g_DataSpaces->ReadVirtual(
-            (ULONG64)LfhSubsegment + g_lfhSubsegmentOffsets.BlockOffsets + g_lfhSubsegmentEncodedEffsets.EncodedData,
-            &encodedData,
-            sizeof(encodedData),
-            nullptr))))
+    encodedDataAddress = (ULONG64)LfhSubsegment + g_lfhSubsegmentOffsets.BlockOffsets + g_lfhSubsegmentEncodedEffsets.EncodedData;
+    if (!SUCCEEDED(ReadData(encodedDataAddress, sizeof(encodedData), (PVOID)&encodedData)))
     {
-        goto Exit;;
+        result = S_FALSE;
+        goto Exit;
     }
 
     //
@@ -778,18 +1024,21 @@ FindPoolBlocksInLfhSubsegment (
     // iterate over them until we find the start block of our allocation
     //
     currentAddress = (ULONG64)LfhSubsegment + lfhFirstEntryOffset;
-    poolHeader = VirtualAlloc(NULL, g_poolHeaderSize, MEM_COMMIT, PAGE_READWRITE);
     bitmap = VirtualAlloc(NULL, lfhFirstEntryOffset - g_lfhSubsegmentOffsets.BlockBitmap, MEM_COMMIT, PAGE_READWRITE);
+    if (bitmap == nullptr)
+    {
+        result = S_FALSE;
+        goto Exit;
+    }
 
     //
     // Read the bitmap here so we don't need to read a part of it for every allocation
     //
-    if (!SUCCEEDED(g_DataSpaces->ReadVirtual(
-            (ULONG64)LfhSubsegment + g_lfhSubsegmentOffsets.BlockBitmap,
-            bitmap,
-            lfhFirstEntryOffset - g_lfhSubsegmentOffsets.BlockBitmap,
-            nullptr)))
+    if (!SUCCEEDED(ReadData((ULONG64)LfhSubsegment + g_lfhSubsegmentOffsets.BlockBitmap,
+                            lfhFirstEntryOffset - g_lfhSubsegmentOffsets.BlockBitmap,
+                            bitmap)))
     {
+        result = S_FALSE;
         goto Exit;
     }
 
@@ -800,43 +1049,33 @@ FindPoolBlocksInLfhSubsegment (
         //
         if (0x1000 - (currentAddress & 0xfff) >= lfhBlockSize)
         {
-            allocation.Address = currentAddress;
-            allocation.Size = lfhBlockSize;
-            allocation.Type = Lfh;
-            allocation.PoolTag = "";
-
-            //
-            // The LFH subsegment contains a bitmap where each block is marked by 2 bits stating its allocation status.
-            // To check that bit:
-            //   1. Get the allocation offset in the subsegment (remember to include FirstEntryOffset)
-            //   2. Get the index by dividing the offset with the block size and multiplying by 2 (2 bits for each block)
-            //   3. Read the correct byte from the bitmap (byte = index / 8) and check the correct bit (index % 8)
-            //
-            offsetInSubseg = currentAddress - lfhFirstEntryOffset - (ULONG64)LfhSubsegment;
-            indexInBitmap = (offsetInSubseg / lfhBlockSize) * 2;
-            bitmapResult = *(CHAR*)((ULONG64)bitmap + (indexInBitmap / 8));
-            allocation.Allocated = _bittest64((LONG64*)(&bitmapResult), indexInBitmap % 8);
-
-            //
-            // Read the pool header in the beginning of the block.
-            //
-            if (SUCCEEDED(g_DataSpaces->ReadVirtual(currentAddress, poolHeader, g_poolHeaderSize, nullptr)))
+            if ((!Address) || (currentAddress > (ULONG64)ALIGN_DOWN_POINTER_BY(Address, 0x1000)))
             {
                 //
-                // Get the Tag from the pool header and build the tag string.
-                //If pool tag has 0xffff..., this has a pointer instead of a tag, ignore.
+                // The LFH subsegment contains a bitmap where each block is marked by 2 bits stating its allocation status.
+                // To check that bit:
+                //   1. Get the allocation offset in the subsegment (remember to include FirstEntryOffset)
+                //   2. Get the index by dividing the offset with the block size and multiplying by 2 (2 bits for each block)
+                //   3. Read the correct byte from the bitmap (byte = index / 8) and check the correct bit (index % 8)
                 //
-                poolTag = (UCHAR*)((ULONG64)poolHeader + g_PoolHeaderOffsets.PoolTagOffset);
-                if ((*(poolTag + 2) != 0xff) && (*(poolTag + 3) != 0xff))
+                offsetInSubseg = currentAddress - lfhFirstEntryOffset - (ULONG64)LfhSubsegment;
+                indexInBitmap = (offsetInSubseg / lfhBlockSize) * 2;
+                bitmapResult = *(CHAR*)((ULONG64)bitmap + (indexInBitmap / 8));
+
+                if (Address && (currentAddress > (ULONG64)ALIGN_UP_POINTER_BY(Address, 0x1000)))
                 {
-                    allocation.PoolTag += *poolTag;
-                    allocation.PoolTag += *(poolTag + 1);
-                    allocation.PoolTag += *(poolTag + 2);
-                    allocation.PoolTag += *(poolTag + 3);
-                    allocation.PoolTag += '\x0';
+                    break;
                 }
+                PrintInfoForSingleBlock(
+                    currentAddress,
+                    lfhBlockSize,
+                    _bittest64((LONG64*)(&bitmapResult), indexInBitmap % 8),
+                    ALLOCATION_TYPE::Lfh,
+                    currentAddress,
+                    Address ? currentAddress == (ULONG64)Address : FALSE,
+                    Address ? 0 : Tag,
+                    Allocations);
             }
-            Allocations->push_back(allocation);
         }
         //
         // Advance to the next block.
@@ -844,73 +1083,155 @@ FindPoolBlocksInLfhSubsegment (
         currentAddress = currentAddress + lfhBlockSize;
     }
 Exit:
-    if (poolHeader != nullptr)
-    {
-        VirtualFree(poolHeader, NULL, MEM_RELEASE);
-    }
     if (bitmap != nullptr)
     {
         VirtualFree(bitmap, NULL, MEM_RELEASE);
     }
+    return result;
 }
 
 /*
-    Parse the supplied VS subsegment to get all the pool blocks in it
-    and add them to the Allocations list.
+    Prints information for a VS pool block, optionally filtered by tag.
+
+    @param[in] ChunkHeader - Address of the chunk header belonging to the pool block
+    @param[in] BlockSize - Size of the pool block
+    @param[in] Allocated- Is the block allocated or free
+    @param[in,opt] Tag - Optional pool tag. If supplied, only blocks with a matching
+        pool tag will be printed.
 */
 VOID
-FindPoolBlocksInVsSubsegment (
-    _In_ PVOID VsSubsegment,
-    _In_ PVOID SubsegmentEnd,
-    _In_ std::list<ALLOC>* Allocations
-)
+PrintInfoForAllVsAllocs (
+    _In_ ULONG64 ChunkHeader,
+    _In_ ULONG BlockSize,
+    _In_ BOOLEAN Allocated,
+    _In_opt_ PCSTR Tag,
+    _In_opt_ std::list<ALLOC>* Allocations
+    )
 {
-    HRESULT result;
-    USHORT signature;
-    USHORT size;
-    PVOID chunkHeader;
-    PVOID nextHeader;
+    ULONG64 currentAddress;
+    ULONG currentSize;
+
+    if (!Allocated)
+    {
+        return;
+    }
+    if (BlockSize > 0x1000)
+    {
+        //
+        // No pool header
+        //
+        currentAddress = ChunkHeader + g_vsChunkHeaderSize;
+        currentSize = BlockSize - g_vsChunkHeaderSize;
+    }
+    else if ((0x1000 - (ChunkHeader % 0xfff) >= BlockSize) ||
+        (0x1000 - (ChunkHeader & 0xfff) <= (g_vsChunkHeaderSize + g_poolHeaderSize)))
+    {
+        //
+        // Allocation data doesn't cross page boundaries, so if UnsafeSize is
+        // larger than the space that's left until the end of the page, this is
+        // not an actual allocation so move on to the next one.
+        // But there are blocks where the chunk header + pool header are right
+        // before page break and the data is immediately after and those seem fine.
+        //
+        currentAddress = ChunkHeader + g_vsChunkHeaderSize + g_poolHeaderSize;
+        currentSize = BlockSize - g_vsChunkHeaderSize - g_poolHeaderSize;
+    }
+    else
+    {
+        return;
+    }
+    PrintInfoForSingleBlock(
+        currentAddress,
+        currentSize,
+        Allocated,
+        ALLOCATION_TYPE::Vs,
+        ChunkHeader + g_vsChunkHeaderSize,
+        FALSE,
+        Tag,
+        Allocations);
+}
+
+/*
+    Prints information for a VS pool block only if matching the requested address.
+
+    @param[in] ChunkHeader - Address of the chunk header belonging to the pool block
+    @param[in] BlockSize - Size of the pool block
+    @param[in] Allocated- Is the block allocated or free
+    @param[in] Address - Address requested by the user.
+        Pool block will only be printed if it's in the page containing Address.
+        The pool block that Address belongs to will be marked with *.
+*/
+VOID
+PrintInfoForVSAddress (
+    _In_ ULONG64 ChunkHeader,
+    _In_ ULONG BlockSize,
+    _In_ BOOLEAN Allocated,
+    _In_ ULONG64 Address,
+    _In_opt_ std::list<ALLOC>* Allocations
+    )
+{
+    BOOLEAN highlight;
+
+    //
+    // Print all pool blocks in the page the allocation is in
+    //
+    if (((ChunkHeader + g_vsChunkHeaderSize + g_poolHeaderSize) & ~0xfff) == (Address & ~0xfff))
+    {
+        highlight = FALSE;
+        if ((ChunkHeader < Address) &&
+            (ChunkHeader + BlockSize > Address))
+        {
+            highlight = TRUE;
+        }
+        PrintInfoForSingleBlock(
+            ChunkHeader + g_vsChunkHeaderSize + g_poolHeaderSize,
+            BlockSize - g_vsChunkHeaderSize - g_poolHeaderSize,
+            Allocated,
+            ALLOCATION_TYPE::Vs,
+            ChunkHeader + g_vsChunkHeaderSize,
+            highlight,
+            0,
+            Allocations);
+    }
+}
+
+/*
+    Prints information for pool blocks found in a VS subsegment.
+
+    @param[in] StartAddress - Start address of the subsegment
+    @param[in] EndAddress - End address of the subsegment
+    @param[in,opt] Address- Optional address to search for
+    @param[in,opt] Tag - Optional pool tag. If supplied, only blocks with a matching
+        pool tag will be printed.
+*/
+VOID
+PrintInfoForVsSubsegment (
+    _In_ ULONG64 StartAddress,
+    _In_ ULONG64 EndAddress,
+    _In_opt_ PVOID Address,
+    _In_opt_ PCSTR Tag,
+    _In_opt_ std::list<ALLOC>* Allocations
+    )
+{
+    ALLOC allocation;
     ULONG64 chunkHeaderKernelAddress;
+    PVOID chunkHeader = nullptr;
     ULONG64 vsChunkHeaderSizes;
     ULONG64 headerBits;
     ULONG unsafeSize;
     BYTE allocated;
-    PVOID poolHeader;
-    UCHAR* poolTag;
-    ALLOC allocation;
-    ULONG numberOfBytes;
+    ULONG64 currentAddress;
+    ULONG currentSize;
 
-    chunkHeader = nullptr;
-    poolHeader = nullptr;
+    ULONG64 validBase;
+    ULONG validSize;
 
-    //
-    // First validate that this really is a VS subsegment by checking if
-    // vsSubsegment->Signature ^ 0x2BED == vsSubsegment.Size
-    //
-    if ((!SUCCEEDED(g_DataSpaces->ReadVirtual((ULONG64)VsSubsegment + g_VsSubsegmentOffsets.SignatureOffset, &signature, sizeof(signature), nullptr))) ||
-        (!SUCCEEDED(g_DataSpaces->ReadVirtual((ULONG64)VsSubsegment + g_VsSubsegmentOffsets.SizeOffset, &size, sizeof(size), nullptr))))
-    {
-        goto Exit;;
-    }
+    chunkHeaderKernelAddress = StartAddress;
+    currentAddress = 0;
+    currentSize = 0;
 
-    if ((signature ^ 0x2BED) != size)
-    {
-        goto Exit;;
-    }
-
-    //
-    // Get the VS chunk header that is right after the HEAP_VS_SUBSEGMENT structure.
-    //
-    chunkHeaderKernelAddress = (ULONG64)VsSubsegment + g_vsSubsegmentSize;
-    chunkHeaderKernelAddress = (ULONG64)ALIGN_UP_POINTER_BY((PVOID)chunkHeaderKernelAddress, 0x10);
     chunkHeader = VirtualAlloc(NULL, g_vsChunkHeaderSize, MEM_COMMIT, PAGE_READWRITE);
     if (chunkHeader == nullptr)
-    {
-        goto Exit;
-    }
-    nextHeader = chunkHeader;
-    poolHeader = VirtualAlloc(NULL, g_poolHeaderSize, MEM_COMMIT, PAGE_READWRITE);
-    if (poolHeader == nullptr)
     {
         goto Exit;
     }
@@ -923,7 +1244,7 @@ FindPoolBlocksInVsSubsegment (
         //
         // Read the current chunk header.
         //
-        if (!SUCCEEDED(g_DataSpaces->ReadVirtual(chunkHeaderKernelAddress, chunkHeader, g_vsChunkHeaderSize, nullptr)))
+        if (!SUCCEEDED(ReadData((ULONG64)chunkHeaderKernelAddress, g_vsChunkHeaderSize, chunkHeader)))
         {
             goto Exit;
         }
@@ -935,6 +1256,7 @@ FindPoolBlocksInVsSubsegment (
         headerBits = *(ULONG64*)(&vsChunkHeaderSizes + g_VsChunkHeaderSizeOffsets.HeaderBitsOffset);
         if (headerBits == 0)
         {
+            g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] HeaderBits are 0\n", __FUNCTIONW__, __LINE__);
             goto Exit;
         }
 
@@ -948,70 +1270,215 @@ FindPoolBlocksInVsSubsegment (
         allocated = (BYTE)((*(ULONG64*)((ULONG64)&headerBits
             + g_VsChunkHeaderSizeOffsets.AllocatedOffset)) >> 16); /* bit position: 16 */
 
-        //
-        // Allocation data doesn't cross page boundaries, so if UnsafeSize is
-        // larger than the space that's left until the end of the page, this is
-        // not an actual allocation so move on to the next one.
-        // But there are blocks where the chunk header + pool header are right
-        //  before page break and the data is immediately after and those seem fine.
-        //
-        if (allocated &&
-            ((0x1000 - (chunkHeaderKernelAddress & 0xfff) >= unsafeSize) ||
-                (0x1000 - (chunkHeaderKernelAddress & 0xfff) <= (g_vsChunkHeaderSize + g_poolHeaderSize))))
+        if (Address)
         {
-            //
-            // Collect information for the block.
-            //
-            allocation.Address = chunkHeaderKernelAddress + g_vsChunkHeaderSize + g_poolHeaderSize;
-            allocation.Size = unsafeSize - g_vsChunkHeaderSize - g_poolHeaderSize;
-            allocation.Allocated = allocated;
-            allocation.PoolTag = "";
-            allocation.Type = Vs;
-
-            if (unsafeSize >= 0x9F8)
-            {
-                numberOfBytes = GetTagFromBigPagesTable(allocation.Address, &allocation.PoolTag);
-            }
-            //
-            // Get pool header
-            //
-            else if (SUCCEEDED(g_DataSpaces->ReadVirtual(chunkHeaderKernelAddress + g_vsChunkHeaderSize, poolHeader, g_poolHeaderSize, nullptr)))
-            {
-                poolTag = (UCHAR*)((ULONG64)poolHeader + g_PoolHeaderOffsets.PoolTagOffset);
-                //
-                // Get the Tag from the pool header and build the tag string.
-                //If pool tag has 0xffff..., this has a pointer instead of a tag, ignore.
-                //
-                if ((*(poolTag + 2) != 0xff) && (*(poolTag + 3) != 0xff))
-                {
-                    allocation.PoolTag += *poolTag;
-                    allocation.PoolTag += *(poolTag + 1);
-                    allocation.PoolTag += *(poolTag + 2);
-                    allocation.PoolTag += *(poolTag + 3);
-                    allocation.PoolTag += '\x0';
-                }
-            }
-            Allocations->push_back(allocation);
+            PrintInfoForVSAddress(chunkHeaderKernelAddress, unsafeSize, allocated, (ULONG64)Address, Allocations);
+        }
+        else
+        {
+            PrintInfoForAllVsAllocs(chunkHeaderKernelAddress, unsafeSize, allocated, Tag, Allocations);
         }
 
+    Next:
         //
         // Advance to the next chunk header.
         //
         chunkHeaderKernelAddress = chunkHeaderKernelAddress + unsafeSize;
-    } while ((ULONG_PTR)chunkHeaderKernelAddress < (ULONG_PTR)SubsegmentEnd - 0x1000);
-    //
-    // It looks like the last page of each subsegment is empty and unused, not sure why.
-    //
+    } while ((ULONG_PTR)chunkHeaderKernelAddress < EndAddress);
 
 Exit:
     if (chunkHeader != nullptr)
     {
         VirtualFree(chunkHeader, NULL, MEM_RELEASE);
     }
-    if (poolHeader != nullptr)
+    return;
+}
+
+/*
+    Parses the supplied VS subsegment to get all the pool blocks in it
+    and add them to the Allocations list.
+*/
+HRESULT
+FindPoolBlocksInVsSubsegment (
+    _In_ PVOID VsSubsegment,
+    _In_ PVOID SubsegmentEnd,
+    _In_opt_ std::list<ALLOC>* Allocations,
+    _In_opt_ PVOID Address,
+    _In_opt_ PCSTR Tag
+)
+{
+    HRESULT result;
+    USHORT signature;
+    USHORT size;
+    PVOID chunkHeader;
+    ULONG64 chunkHeaderKernelAddress;
+    PVOID poolHeader;
+    ALLOC allocation;
+
+    ULONG64 validBase;
+    ULONG validSize;
+
+    chunkHeader = nullptr;
+    poolHeader = nullptr;
+    result = S_OK;
+
+    //
+    // First validate that this really is a VS subsegment by checking if
+    // vsSubsegment->Signature ^ 0x2BED == vsSubsegment.Size
+    //
+    result = g_DataSpaces->GetValidRegionVirtual((ULONG64)VsSubsegment, g_vsSubsegmentSize, &validBase, &validSize);
+    if ((!SUCCEEDED(result)) || (validBase != (ULONG64)VsSubsegment))
     {
-        VirtualFree(poolHeader, NULL, MEM_RELEASE);
+        g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Invalid region\n", __FUNCTIONW__, __LINE__);
+        result = S_FALSE;
+        goto Exit;
     }
+
+    if ((!SUCCEEDED(g_DataSpaces->ReadVirtual((ULONG64)VsSubsegment + g_VsSubsegmentOffsets.SignatureOffset, &signature, sizeof(signature), nullptr))) ||
+        (!SUCCEEDED(g_DataSpaces->ReadVirtual((ULONG64)VsSubsegment + g_VsSubsegmentOffsets.SizeOffset, &size, sizeof(size), nullptr))))
+    {
+        g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Failed to read data\n", __FUNCTIONW__, __LINE__);
+        result = S_FALSE;
+        goto Exit;
+    }
+
+    if ((signature ^ 0x2BED) != size)
+    {
+        g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Incorrect signature\n", __FUNCTIONW__, __LINE__);
+        result = S_FALSE;
+        goto Exit;
+    }
+
+    //
+    // Get the VS chunk header that is right after the HEAP_VS_SUBSEGMENT structure.
+    //
+    chunkHeaderKernelAddress = (ULONG64)VsSubsegment + g_vsSubsegmentSize;
+    chunkHeaderKernelAddress = (ULONG64)ALIGN_UP_POINTER_BY((PVOID)chunkHeaderKernelAddress, 0x10);
+    
+    PrintInfoForVsSubsegment(chunkHeaderKernelAddress, (ULONG_PTR)SubsegmentEnd - 0x1000, Address, Tag, Allocations);
+
+Exit:
+    return result;
+}
+
+/*
+    Parses a pool descriptor and prints the requested pool blocks in it.
+    Finds the type for the descriptor and calls an appropriate function
+    for the type.
+
+    @param[in] SegmentAddress - Kernel address of the HEAP_PAGE_SEGMENT being parsed
+    @param[in] HeapPageSeg - Local buffer containing the data from SegmentAddress
+        HEAP_PAGE_SEGMENT is a large structure to we read it once and pass the local copy around
+        for each descriptor.
+    @param[in] CurrentDescriptorIndex - Index of the descriptor to parse
+    @param[in] UnitShift - Number of shifts needed to find the basic unit handled by this segment
+        Can be 0xC of 0x10 depending on segment type.
+    @param[in,opt] Allocations - Left over from PoolViewer, can be ignored for now
+    @param[in,opt] Address- Optional address to search for
+    @param[in,opt] Tag - Optional pool tag. If supplied, only blocks with a matching
+        pool tag will be printed.
+*/
+ULONG
+GetDataForDescriptor (
+    _In_ ULONG64 SegmentAddress,
+    _In_ PVOID HeapPageSeg,
+    _In_ ULONG CurrentDescriptorIndex,
+    _In_ UCHAR UnitShift,
+    _In_opt_ std::list<ALLOC>* Allocations,
+    _In_opt_ PVOID Address,
+    _In_opt_ PCSTR Tag
+    )
+{
+    HRESULT result;
+    UCHAR rangeFlags;
+    BOOLEAN allocated;
+    ULONG64 descArrayEntry;
+    UCHAR unitSize;
+    ULONG64 segmentStart;
+    ULONG64 segmentEnd;
+
+    result = S_OK;
+    //
+    // Get the current DescArray entry and get the UnitSize and RangeFlags fields from it.
+    //
+    descArrayEntry = (ULONG64)HeapPageSeg + g_PageSegmentOffsets.DescArrayOffset + (g_RangeDescriptorSize * CurrentDescriptorIndex);
+    unitSize = *(UCHAR*)(descArrayEntry + g_PageRangeDescriptorOffsets.UnitSizeOffset);
+    if (unitSize == 0)
+    {
+        return 1;
+    }
+    rangeFlags = *(UCHAR*)(descArrayEntry + g_PageRangeDescriptorOffsets.RangeFlagsOffset);
+    
+    //
+    // Calculate the start and end addresses of this subsegment.
+    //
+    segmentStart = (ULONG_PTR)SegmentAddress + ((ULONG64)CurrentDescriptorIndex * 1 << UnitShift);
+    segmentEnd = (ULONG_PTR)SegmentAddress + (((ULONG64)CurrentDescriptorIndex + unitSize) * 1 << UnitShift);
+
+    //
+    // RangeFlags 0 / 2 = area not currently used by any allocations (bottom bit not set)
+    // If we requested information for a specific address and it's in the middle of a subsegment,
+    // call this function again with the index of the beginning of the subsegment.
+    // If we do not care about a specific address we will iterate all subsegments anyway
+    // so we'll ignore descriptors that are in the middle of a subsegment.
+    //
+    if (Address && (rangeFlags == 1))
+    {
+        GetDataForDescriptor(SegmentAddress,
+                             HeapPageSeg,
+                             CurrentDescriptorIndex - unitSize,
+                             UnitShift,
+                             Allocations,
+                             Address,
+                             Tag);
+    }
+    else if ((rangeFlags != 0) && (rangeFlags != 2))
+    {
+        //
+        // Check if descriptor is valid by comparing the signature with the magic signature value
+        //
+        if (*(ULONG*)(descArrayEntry + g_PageRangeDescriptorOffsets.TreeSignatureOffset) != 0xccddccdd)
+        {
+            g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Invalid descriptor signature\n", __FUNCTIONW__, __LINE__);
+            return 1;
+        }
+        if (rangeFlags == 3)
+        {
+            //
+            // Large pool
+            //
+            allocated = ParseLargePoolAlloc(
+                segmentStart,
+                false,
+                Allocations,
+                Tag);
+        }
+        else if (rangeFlags == 0xf)
+        {
+            //
+            // VS subsegment
+            //
+            result = FindPoolBlocksInVsSubsegment(
+                (PVOID)segmentStart,
+                (PVOID)segmentEnd,
+                Allocations,
+                Address,
+                Tag);
+        }
+        else if (rangeFlags == 0xb)
+        {
+            //
+            // Lfh subsegment
+            //
+            result = FindPoolBlocksInLfhSubsegment(
+                (PVOID)segmentStart,
+                (PVOID)segmentEnd,
+                Allocations,
+                Address,
+                Tag);
+        }
+    }
+    return unitSize;
 }
 
 /*
@@ -1020,7 +1487,8 @@ Exit:
 VOID
 ParseSegContext (
     _In_ ULONG64 SegContext,
-    _In_ std::list<ALLOC>* Allocations
+    _In_ std::list<ALLOC>* Allocations,
+    _In_opt_ PCSTR Tag
 )
 {
     LIST_ENTRY listHead;
@@ -1028,13 +1496,9 @@ ParseSegContext (
     LIST_ENTRY listEntry;
     PVOID heapPageSeg;
     CHAR firstDescriptorIndex;
-    ULONG64 descArrayEntry;
     UCHAR unitSize;
-    UCHAR rangeFlags;
-    BOOLEAN allocated;
-    ULONG64 segmentStart;
-    ULONG64 segmentEnd;
     UCHAR unitShift;
+    ULONG64 segment;
 
     heapPageSeg = nullptr;
 
@@ -1076,7 +1540,8 @@ ParseSegContext (
         // We want to read the HEAP_PAGE_SEGMENT structures linked in this segContext
         // We basically need get the CONTAINING_RECORD for each list entry
         //
-        if (!SUCCEEDED(g_DataSpaces->ReadVirtual((ULONG64)nextEntry - g_PageSegmentOffsets.ListEntryOffset, heapPageSeg, g_HeapPageSegSize, nullptr)))
+        segment = (ULONG64)nextEntry - g_PageSegmentOffsets.ListEntryOffset;
+        if (!SUCCEEDED(g_DataSpaces->ReadVirtual(segment, heapPageSeg, g_HeapPageSegSize, nullptr)))
         {
             goto Next;
         }
@@ -1087,63 +1552,7 @@ ParseSegContext (
         //
         for (int i = firstDescriptorIndex; i < 256; i++)
         {
-            //
-            // Get the current DescArray entry and get the UnitSize and RangeFlags fields from it.
-            //
-            descArrayEntry = (ULONG64)heapPageSeg + g_PageSegmentOffsets.DescArrayOffset + (g_RangeDescriptorSize * i);
-            unitSize = *(UCHAR*)(descArrayEntry + g_PageRangeDescriptorOffsets.UnitSizeOffset);
-            if (unitSize == 0)
-            {
-                continue;
-            }
-            rangeFlags = *(UCHAR*)(descArrayEntry + g_PageRangeDescriptorOffsets.RangeFlagsOffset);
-
-            //
-            // Calculate the start and end addresses of this subsegment.
-            //
-            segmentStart = (ULONG_PTR)nextEntry + ((ULONG64)i * 1 << unitShift);
-            segmentEnd = (ULONG_PTR)nextEntry + (((ULONG64)i + unitSize) * 1 << unitShift);
-
-            //
-            // RangeFlags 0 / 2 = area not currently used by any allocations (bottom bit not set)
-            // RangeFlags 1 = Middle of subsegment, so not interesting to us right now
-            //
-            if ((rangeFlags != 0) && (rangeFlags != 1) && (rangeFlags != 2))
-            {
-                if (rangeFlags == 3)
-                {
-                    //
-                    // Large pool
-                    //
-                    allocated = ParseLargePoolAlloc(
-                        segmentStart,
-                        false,
-                        Allocations);
-                }
-                else if (rangeFlags == 0xf)
-                {
-                    //
-                    // VS subsegment
-                    //
-                    FindPoolBlocksInVsSubsegment(
-                        (PVOID)segmentStart,
-                        (PVOID)segmentEnd,
-                        Allocations);
-                }
-                else if (rangeFlags == 0xb)
-                {
-                    //
-                    // Lfh subsegment
-                    //
-                    FindPoolBlocksInLfhSubsegment(
-                        (PVOID)segmentStart,
-                        (PVOID)segmentEnd,
-                        Allocations);
-                }
-            }
-            //
-            // Advance the index to get to the next subsegment.
-            //
+            unitSize = GetDataForDescriptor(segment, heapPageSeg, i, unitShift, Allocations, 0, Tag);
             i += unitSize - 1;
         }
     Next:
@@ -1170,34 +1579,39 @@ Exit:
 VOID
 GetInformationForHeap (
     _In_ ULONG64 HeapAddress,
-    _In_ std::list<ALLOC>* Allocations
-)
+    _In_ std::list<ALLOC>* Allocations,
+    _In_opt_ PCSTR Tag
+    )
 {
     //
     // Parse SegContexts[0].
     //
     ParseSegContext(
         HeapAddress + g_SegmentHeapOffsets.SegContextsOffsets,
-        Allocations);
+        Allocations,
+        Tag);
 
     //
     // Parse SegContexts[1].
     //
     ParseSegContext(
         HeapAddress + g_SegmentHeapOffsets.SegContextsOffsets + g_SegContextSize,
-        Allocations);
+        Allocations,
+        Tag);
 
     //
     // Parse LargeAllocMetadata
     //
-    ParseLargePages(HeapAddress, Allocations);
+    ParseLargePages(HeapAddress, Allocations, Tag);
 }
 
 /*
     Find all SEGMENT_HEAP structures and parse them to get the pool blocks they manage.
 */
 std::list<HEAP>
-GetAllHeaps ()
+GetAllHeaps (
+    _In_opt_ PCSTR Tag
+    )
 {
     HRESULT result;
     ULONG numberOfPools;
@@ -1230,7 +1644,7 @@ GetAllHeaps ()
     //
     // Iterate over all pools and get the heaps from each.
     //
-    for (int j = 0; j < numberOfPools; j++)
+    for (ULONG j = 0; j < numberOfPools; j++)
     {
         //
         // Every POOL_NODE structure potentially contains 4 heaps.
@@ -1261,7 +1675,7 @@ GetAllHeaps ()
         for (int i = 0; i < 4; i++)
         {
             heap = {};
-            GetInformationForHeap(heaps[i], &heap.Allocations);
+            GetInformationForHeap(heaps[i], &heap.Allocations, Tag);
             heap.Address = heaps[i];
             heap.NodeNumber = j;
             heap.Special = FALSE;
@@ -1284,7 +1698,7 @@ GetAllHeaps ()
     for (int i = 0; i < 3; i++)
     {
         heap = {};
-        GetInformationForHeap(specialHeaps[i], &heap.Allocations);
+        GetInformationForHeap(specialHeaps[i], &heap.Allocations, Tag);
         heap.Address = specialHeaps[i];
         heap.NodeNumber = -1;
         heap.Special = TRUE;
@@ -1294,6 +1708,97 @@ GetAllHeaps ()
     }
 Exit:
     return g_Heaps;
+}
+
+/*
+    Receives an address in the pool and dumps information about it.
+    Such as size, pool tag, type (LFH, VS), etc.
+*/
+VOID
+GetPoolDataForAddress (
+    _In_ PVOID Address
+)
+{
+    PVOID heapPageSegment;
+    PVOID heapPageSeg;
+    ULONG pageIndex;
+    ULONG result;
+    ULONG unitShift;
+    ULONG64 segmentMask;
+
+    //
+    // First check what type of allocation this is to know how to handle it
+    //
+    result = BitmapBitmaskRead(Address);
+
+    //
+    // Get the segment for the input address.
+    // There is a HEAP_PAGE_SEGMENT for each MB so we need to align our address
+    // to a MB to find it.
+    //
+    unitShift = 0;
+    segmentMask = 0;
+    if (result == 1)
+    {
+        //
+        // SegContext[0]
+        //
+        segmentMask = 0xfffffffffff00000;
+        unitShift = 0xC;
+    }
+    else if (result == 2)
+    {
+        //
+        // SegContext[1]
+        //
+        segmentMask = 0xffffffffff000000;
+        unitShift = 0x10;
+    }
+    else
+    {
+        //
+        // LargePool
+        //
+        ParseLargePoolAlloc((ULONG64)Address, true, 0, 0);
+        return;
+    }
+
+    //
+    // Get the heap where the address is
+    //
+    heapPageSegment = (PVOID)((ULONG_PTR)(Address)&segmentMask);
+
+    //
+    // Find the index of our address' page in the descriptor's array.
+    // There is a descriptor for every page, so we check how far our
+    // page is from the segment state
+    // (aligned to the nearest MB or 16 MB, depends on SegContext type).
+    // There are 256 descriptors (0-0xFF) so we need to get the lowest byte
+    // as the index.
+    //
+    pageIndex = ((((ULONG64)Address - (ULONG64)heapPageSegment) >> unitShift) & 0x00000000000ff);
+
+    //
+    // Allocate memory for the HEAP_PAGE_SEGMENT.
+    //
+    heapPageSeg = VirtualAlloc(NULL, g_HeapPageSegSize, MEM_COMMIT, PAGE_READWRITE);
+    if (heapPageSeg == nullptr)
+    {
+        g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Failed allocating memory\n", __FUNCTIONW__, __LINE__);
+        goto Exit;
+    }
+    if (!SUCCEEDED(g_DataSpaces->ReadVirtual((ULONG64)heapPageSegment, heapPageSeg, g_HeapPageSegSize, nullptr)))
+    {
+        g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Failed reading memory: 0x%p\n", __FUNCTIONW__, __LINE__);
+        goto Exit;
+    }
+
+    GetDataForDescriptor((ULONG64)heapPageSegment, heapPageSeg, pageIndex, unitShift, 0, Address, 0);
+Exit:
+    if (heapPageSeg != nullptr)
+    {
+        VirtualFree(heapPageSeg, NULL, MEM_RELEASE);
+    }
 }
 
 /*
@@ -1497,6 +2002,67 @@ Exit:
     return result;
 }
 
+HRESULT
+InitializeDebugGlobals(
+    void
+)
+{
+    HRESULT result;
+
+    result = DebugCreate(__uuidof(IDebugClient), (PVOID*)&g_DebugClient);
+    if (!SUCCEEDED(result))
+    {
+        printf("DebugCreate failed with error 0x%x\n", result);
+        goto Exit;
+    }
+
+    result = g_DebugClient->QueryInterface(__uuidof(IDebugSymbols), (PVOID*)&g_DebugSymbols);
+    if (!SUCCEEDED(result))
+    {
+        printf("QueryInterface for debug symbols failed with error 0x%x\n", result);
+        goto Exit;
+    }
+
+    result = g_DebugClient->QueryInterface(__uuidof(IDebugDataSpaces), (PVOID*)&g_DataSpaces);
+    if (!SUCCEEDED(result))
+    {
+        printf("QueryInterface for debug data spaces failed with error 0x%x\n", result);
+        goto Exit;
+    }
+
+    result = g_DebugClient->QueryInterface(__uuidof(IDebugControl), (PVOID*)&g_DebugControl);
+    if (!SUCCEEDED(result))
+    {
+        printf("QueryInterface for debug control failed with error 0x%x\n", result);
+        goto Exit;
+    }
+Exit:
+    return result;
+}
+
+VOID
+UninitializeDebugGlobals (
+    void
+    )
+{
+    if (g_DebugClient != nullptr)
+    {
+        g_DebugClient->Release();
+    }
+    if (g_DebugSymbols != nullptr)
+    {
+        g_DebugSymbols->Release();
+    }
+    if (g_DataSpaces != nullptr)
+    {
+        g_DataSpaces->Release();
+    }
+    if (g_DebugControl != nullptr)
+    {
+        g_DebugControl->Release();
+    }
+}
+
 /*
     Open a dmp file and get information about all the heaps
     in it and the pool blocks they manage.
@@ -1522,33 +2088,7 @@ GetPoolInformation (
         }
     }
 
-    result = DebugCreate(__uuidof(IDebugClient), (PVOID*)&g_DebugClient);
-    if (!SUCCEEDED(result))
-    {
-        printf("DebugCreate failed with error 0x%x\n", result);
-        goto Exit;
-    }
-
-    g_DebugClient->QueryInterface(__uuidof(IDebugSymbols), (PVOID*)&g_DebugSymbols);
-    if (!SUCCEEDED(result))
-    {
-        printf("QueryInterface for debug symbols failed with error 0x%x\n", result);
-        goto Exit;
-    }
-
-    g_DebugClient->QueryInterface(__uuidof(IDebugDataSpaces), (PVOID*)&g_DataSpaces);
-    if (!SUCCEEDED(result))
-    {
-        printf("QueryInterface for debug data spaces failed with error 0x%x\n", result);
-        goto Exit;
-    }
-
-    g_DebugClient->QueryInterface(__uuidof(IDebugControl), (PVOID*)&g_DebugControl);
-    if (!SUCCEEDED(result))
-    {
-        printf("QueryInterface for debug control failed with error 0x%x\n", result);
-        goto Exit;
-    }
+    result = InitializeDebugGlobals();
 
     //
     // Open dump file
@@ -1561,27 +2101,12 @@ GetPoolInformation (
         goto Exit;
     }
 
-    GetAllHeaps();
+    GetAllHeaps(NULL);
     *NumberOfHeaps = g_Heaps.size();
     g_DebugClient->EndSession(DEBUG_END_ACTIVE_DETACH);
 
 Exit:
-    if (g_DebugClient != nullptr)
-    {
-        g_DebugClient->Release();
-    }
-    if (g_DebugSymbols != nullptr)
-    {
-        g_DebugSymbols->Release();
-    }
-    if (g_DataSpaces != nullptr)
-    {
-        g_DataSpaces->Release();
-    }
-    if (g_DebugControl != nullptr)
-    {
-        g_DebugControl->Release();
-    }
+    UninitializeDebugGlobals();
     if (CreateLiveDump)
     {
         DeleteFileA(FilePath);
@@ -1639,7 +2164,7 @@ GetNextAllocation(
     *Address = a.Address;
     *Size = a.Size;
     *Allocated = a.Allocated;
-    *Type = a.Type;
+    *Type = (int)a.Type;
     g_CurrentAllocs.erase(it);
 
     char tag[5];

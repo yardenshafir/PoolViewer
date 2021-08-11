@@ -1,6 +1,9 @@
 #include <Windows.h>
 #include <winternl.h>
+#include <DbgEng.h>
 #include <list>
+#include <stdio.h>
+#include <string>
 
 #pragma once
 
@@ -10,14 +13,19 @@ using namespace std;
 // Enums
 //
 
-enum RTLP_CSPARSE_BITMAP_STATE
+extern PDEBUG_CLIENT g_DebugClient;
+extern PDEBUG_SYMBOLS g_DebugSymbols;
+extern PDEBUG_DATA_SPACES4 g_DataSpaces;
+extern PDEBUG_CONTROL g_DebugContro;
+
+enum class RTLP_CSPARSE_BITMAP_STATE
 {
     CommitBitmapInvalid = 0x0,
     UserBitmapInvalid = 0x1,
     UserBitmapValid = 0x2,
 };
 
-enum ALLOCATION_TYPE
+enum class ALLOCATION_TYPE
 {
     Lfh = 0x0,
     Vs = 0x1,
@@ -130,11 +138,13 @@ struct HEAP_PAGE_SEGMENT_OFFSETS
 {
     ULONG ListEntryOffset;
     ULONG SignatureOffset;
+    ULONG SegmentCommitStateOffset;
     ULONG DescArrayOffset;
 };
 
 struct HEAP_PAGE_RANGE_DESCRIPTOR_OFFSET
 {
+    ULONG TreeSignatureOffset;
     ULONG RangeFlagsOffset;
     ULONG UnitSizeOffset;
 };
@@ -309,3 +319,44 @@ GetPoolInformation (
     _In_ bool CreateLiveDump,
     _Outptr_ int* numberOfHeaps
 );
+
+HRESULT
+InitializeDebugGlobals(
+    void
+);
+
+VOID
+UninitializeDebugGlobals(
+    void
+);
+
+std::list<HEAP>
+GetAllHeaps(
+    _In_opt_ PCSTR Tag
+);
+
+VOID
+GetPoolDataForAddress(
+    _In_ PVOID Address
+);
+
+HRESULT
+GetTypes(
+    void
+);
+
+HRESULT
+GetOffsets(
+    void
+);
+
+HRESULT
+GetSizes(
+    void
+);
+
+HRESULT
+GetHeapGlobals(
+    void
+);
+
