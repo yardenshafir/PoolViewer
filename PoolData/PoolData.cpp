@@ -976,6 +976,7 @@ FindPoolBlocksInLfhSubsegment (
     ULONG64 encodedDataAddress;
     ULONG64 validBase;
     ULONG validSize;
+    BOOLEAN highlight;
 
     bitmap = nullptr;
     result = S_OK;
@@ -1044,6 +1045,7 @@ FindPoolBlocksInLfhSubsegment (
 
     while (currentAddress + lfhBlockSize <= (ULONG_PTR)SubsegmentEnd - 0x1000)
     {
+        highlight = FALSE;
         //
         // It looks like blocks actually don't cross page boundaries, not really sure why
         //
@@ -1066,13 +1068,21 @@ FindPoolBlocksInLfhSubsegment (
                 {
                     break;
                 }
+                if (Address)
+                {
+                    if ((currentAddress <= (ULONG64)Address) &&
+                        (currentAddress + lfhBlockSize > (ULONG64)Address))
+                    {
+                        highlight = TRUE;
+                    }
+                }
                 PrintInfoForSingleBlock(
                     currentAddress,
                     lfhBlockSize,
                     _bittest64((LONG64*)(&bitmapResult), indexInBitmap % 8),
                     ALLOCATION_TYPE::Lfh,
                     currentAddress,
-                    Address ? currentAddress == (ULONG64)Address : FALSE,
+                    highlight,
                     Address ? 0 : Tag,
                     Allocations);
             }
@@ -1123,7 +1133,7 @@ PrintInfoForAllVsAllocs (
         currentAddress = ChunkHeader + g_vsChunkHeaderSize;
         currentSize = BlockSize - g_vsChunkHeaderSize;
     }
-    else if ((0x1000 - (ChunkHeader % 0xfff) >= BlockSize) ||
+    else if ((0x1000 - (ChunkHeader & 0xfff) >= BlockSize) ||
         (0x1000 - (ChunkHeader & 0xfff) <= (g_vsChunkHeaderSize + g_poolHeaderSize)))
     {
         //
@@ -1178,7 +1188,7 @@ PrintInfoForVSAddress (
     if (((ChunkHeader + g_vsChunkHeaderSize + g_poolHeaderSize) & ~0xfff) == (Address & ~0xfff))
     {
         highlight = FALSE;
-        if ((ChunkHeader < Address) &&
+        if ((ChunkHeader <= Address) &&
             (ChunkHeader + BlockSize > Address))
         {
             highlight = TRUE;
@@ -1235,7 +1245,6 @@ PrintInfoForVsSubsegment (
     {
         goto Exit;
     }
-
     //
     // Walk the pool chunks in the subsegment and get information for each one.
     //
@@ -1256,7 +1265,6 @@ PrintInfoForVsSubsegment (
         headerBits = *(ULONG64*)(&vsChunkHeaderSizes + g_VsChunkHeaderSizeOffsets.HeaderBitsOffset);
         if (headerBits == 0)
         {
-            g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] HeaderBits are 0\n", __FUNCTIONW__, __LINE__);
             goto Exit;
         }
 
@@ -1329,7 +1337,7 @@ FindPoolBlocksInVsSubsegment (
     result = g_DataSpaces->GetValidRegionVirtual((ULONG64)VsSubsegment, g_vsSubsegmentSize, &validBase, &validSize);
     if ((!SUCCEEDED(result)) || (validBase != (ULONG64)VsSubsegment))
     {
-        g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Invalid region\n", __FUNCTIONW__, __LINE__);
+        g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Invalid region at subsegment 0x%p\n", __FUNCTIONW__, __LINE__, VsSubsegment);
         result = S_FALSE;
         goto Exit;
     }
@@ -1344,7 +1352,7 @@ FindPoolBlocksInVsSubsegment (
 
     if ((signature ^ 0x2BED) != size)
     {
-        g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Incorrect signature\n", __FUNCTIONW__, __LINE__);
+        g_DebugControl->Output(DEBUG_OUTPUT_ERROR, "[%ws::%d] Incorrect signature at subsegment 0x%p\n", __FUNCTIONW__, __LINE__, VsSubsegment);
         result = S_FALSE;
         goto Exit;
     }
@@ -1405,6 +1413,7 @@ GetDataForDescriptor (
     unitSize = *(UCHAR*)(descArrayEntry + g_PageRangeDescriptorOffsets.UnitSizeOffset);
     if (unitSize == 0)
     {
+        g_DebugControl->Output(DEBUG_OUTPUT_DEBUGGEE, "Unit size is 0!\n");
         return 1;
     }
     rangeFlags = *(UCHAR*)(descArrayEntry + g_PageRangeDescriptorOffsets.RangeFlagsOffset);
@@ -1610,7 +1619,8 @@ GetInformationForHeap (
 */
 std::list<HEAP>
 GetAllHeaps (
-    _In_opt_ PCSTR Tag
+    _In_opt_ PCSTR Tag,
+    _In_opt_ POOL_VIEW_FLAGS Flags
     )
 {
     HRESULT result;
@@ -1674,6 +1684,16 @@ GetAllHeaps (
         //
         for (int i = 0; i < 4; i++)
         {
+            //
+            // This ugly if statement basically means:
+            // If we requested only a specific pool type and this is the wrong pool type, skip this
+            //
+            if (((Flags.OnlyPaged) && (heapNumberToPoolType[i] != PagedPool)) ||
+                (Flags.OnlyNonPaged) && (
+                    (heapNumberToPoolType[i] != NonPagedPool) && heapNumberToPoolType[i] != NonPagedPoolNx))
+            {
+                continue;
+            }
             heap = {};
             GetInformationForHeap(heaps[i], &heap.Allocations, Tag);
             heap.Address = heaps[i];
@@ -1762,7 +1782,6 @@ GetPoolDataForAddress (
         ParseLargePoolAlloc((ULONG64)Address, true, 0, 0);
         return;
     }
-
     //
     // Get the heap where the address is
     //
@@ -2075,6 +2094,9 @@ GetPoolInformation (
 )
 {
     HRESULT result;
+    POOL_VIEW_FLAGS flags;
+
+    flags.AllFlags = 0;
     //
     // Initialize interfaces
     //
@@ -2101,7 +2123,7 @@ GetPoolInformation (
         goto Exit;
     }
 
-    GetAllHeaps(NULL);
+    GetAllHeaps(NULL, flags);
     *NumberOfHeaps = g_Heaps.size();
     g_DebugClient->EndSession(DEBUG_END_ACTIVE_DETACH);
 

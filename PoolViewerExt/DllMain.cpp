@@ -15,10 +15,21 @@ EXT_DECLARE_GLOBALS();
 
 UINT g_helpMenu = 0;
 
-EXT_COMMAND(poolview, "Parses the kernel pool", "{;e64,o;address;input address}{tag;s;str;Pool tag to use}")
+EXT_COMMAND(poolview, "Parses the kernel pool", "{;e64,o;address;input address}{tag;s;str;Pool tag to use}{paged;b;paged;only search paged pools}{nonpaged;b;nonpaged;only search nonpaged pools}")
 {
     ULONG64 address;
     PCSTR tag;
+    POOL_VIEW_FLAGS Flags;
+
+    Flags.AllFlags = 0;
+    if (HasArg("paged"))
+    {
+        Flags.OnlyPaged = 1;
+    }
+    if (HasArg("nonpaged"))
+    {
+        Flags.OnlyNonPaged = 1;
+    }
     if (HasArg("tag"))
     {
         tag = GetArgStr("tag", false);
@@ -29,7 +40,7 @@ EXT_COMMAND(poolview, "Parses the kernel pool", "{;e64,o;address;input address}{
         }
         g_DebugControl->Output(DEBUG_OUTPUT_DEBUGGEE, "  Address              Size       (Status)      Tag    Type\n");
         g_DebugControl->Output(DEBUG_OUTPUT_DEBUGGEE, "  ---------------------------------------------------------\n");
-        GetAllHeaps(tag);
+        GetAllHeaps(tag, Flags);
         return;
     }
     else

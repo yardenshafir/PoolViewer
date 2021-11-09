@@ -240,6 +240,16 @@ struct HEAP
     ULONG64 Address;
 };
 
+struct POOL_VIEW_FLAGS {
+    union {
+        ULONG AllFlags;
+        struct {
+            ULONG OnlyPaged : 1;
+            ULONG OnlyNonPaged : 1;
+        };
+    };
+};
+
 //
 // structs needed to create live dmp
 //
@@ -332,7 +342,8 @@ UninitializeDebugGlobals(
 
 std::list<HEAP>
 GetAllHeaps(
-    _In_opt_ PCSTR Tag
+    _In_opt_ PCSTR Tag,
+    _In_opt_ POOL_VIEW_FLAGS Flags
 );
 
 VOID
