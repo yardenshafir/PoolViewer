@@ -6,6 +6,7 @@
         xmlns:local="clr-namespace:PoolViewer"
         mc:Ignorable="d"
         Style="{DynamicResource FlatWindowStyle}"
+        Closing="Window_Closing" 
         Title="PoolViewer" Height="630" Width="1285" WindowState="Maximized">
     <Grid>
         <Menu Name="Menu"  DockPanel.Dock="Top">

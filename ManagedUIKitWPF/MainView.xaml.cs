@@ -487,6 +487,11 @@ namespace PoolViewer
             Environment.Exit(0);
         }
 
+        private void Window_Closing(object sender, CancelEventArgs e)
+        {
+            Environment.Exit(0);
+        }
+
         [Serializable]
         public struct ShellExecuteInfo
         {
