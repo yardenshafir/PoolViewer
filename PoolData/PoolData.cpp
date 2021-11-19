@@ -794,18 +794,21 @@ ParseLargePoolAlloc (
     //
     // Add this allocation to the list.
     //
-    allocation.Address = Address;
-    allocation.Size = numberOfBytes;
-    if (LargePool)
+    if (Allocations != nullptr)
     {
-        allocation.Type = ALLOCATION_TYPE::Large;
+        allocation.Address = Address;
+        allocation.Size = numberOfBytes;
+        if (LargePool)
+        {
+            allocation.Type = ALLOCATION_TYPE::Large;
+        }
+        else
+        {
+            allocation.Type = ALLOCATION_TYPE::Big;
+        }
+        allocation.Allocated = bitmapResult;
+        Allocations->push_back(allocation);
     }
-    else
-    {
-        allocation.Type = ALLOCATION_TYPE::Big;
-    }
-    allocation.Allocated = bitmapResult;
-    Allocations->push_back(allocation);
 
 Exit:
     if (heapVamgrRange != nullptr)
