@@ -554,6 +554,14 @@ HRESULT PrintInfoForSingleBlock (
     std::string type;
     result = S_OK;
 
+    if (Tag && !Allocated)
+    {
+        //
+        // If a block isn't allocated we don't want to include it in our tag search
+        //
+        return S_OK;
+    }
+
     poolHeader = VirtualAlloc(NULL, g_poolHeaderSize, MEM_COMMIT, PAGE_READWRITE);
     if (poolHeader == nullptr)
     {
@@ -614,7 +622,7 @@ HRESULT PrintInfoForSingleBlock (
         }
     }
 
-    if (Tag)
+    if (Tag && Allocated)
     {
         for (int i = 0; i < strlen(Tag); i++)
         {
@@ -1697,6 +1705,23 @@ GetAllHeaps (
             {
                 continue;
             }
+            if (i == 0)
+            {
+                g_DebugControl->Output(DEBUG_OUTPUT_DEBUGGEE, "*** Printing Data for NonPagedPool ***\n\n");
+            }
+            else if (i == 1)
+            {
+                g_DebugControl->Output(DEBUG_OUTPUT_DEBUGGEE, "*** Printing Data for NonPagedPoolNx ***\n\n");
+            }
+            else if (i == 2)
+            {
+                g_DebugControl->Output(DEBUG_OUTPUT_DEBUGGEE, "*** Printing Data for PagedPool ***\n\n");
+            }
+            else if (i == 3)
+            {
+                g_DebugControl->Output(DEBUG_OUTPUT_DEBUGGEE, "*** Printing Data for Prototype PagedPool ***\n\n");
+            }
+
             heap = {};
             GetInformationForHeap(heaps[i], &heap.Allocations, Tag);
             heap.Address = heaps[i];
@@ -1721,6 +1746,18 @@ GetAllHeaps (
     for (int i = 0; i < 3; i++)
     {
         heap = {};
+        if (i == 0)
+        {
+            g_DebugControl->Output(DEBUG_OUTPUT_DEBUGGEE, "*** Printing Data for Special NonPagedPool ***\n\n");
+        }
+        else if (i == 1)
+        {
+            g_DebugControl->Output(DEBUG_OUTPUT_DEBUGGEE, "*** Printing Data for Special NonPagedPoolNx ***\n\n");
+        }
+        if (i == 2)
+        {
+            g_DebugControl->Output(DEBUG_OUTPUT_DEBUGGEE, "*** Printing Data for Spacial PagedPool ***\n\n");
+        }
         GetInformationForHeap(specialHeaps[i], &heap.Allocations, Tag);
         heap.Address = specialHeaps[i];
         heap.NodeNumber = -1;
