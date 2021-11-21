@@ -371,3 +371,4 @@ GetHeapGlobals(
     void
 );
 
+typedef HRESULT(*DebugCreateFunc)(_In_ REFIID, _Out_ PVOID*);

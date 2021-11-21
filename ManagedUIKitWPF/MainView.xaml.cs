@@ -293,11 +293,47 @@ namespace PoolViewer
             Subsegments.ItemsSource = subsegs;
             Subsegments.Visibility = Visibility.Visible;
             SubsegText.Visibility = Visibility.Visible;
-    }
+        }
+
+        private bool LoadDbgDlls()
+        {
+            IntPtr dbgEng = NativeMethods.GetModuleHandle("DbgEng.dll");
+            if (dbgEng != IntPtr.Zero)
+            {
+                return true;
+            }
+
+            string currentDir = Directory.GetCurrentDirectory();
+            if (File.Exists($"{currentDir}\\DbgEng.dll") &&
+                File.Exists($"{currentDir}\\DbgHelp.dll"))
+            {
+                //
+                // Load DLLs from current directory if they exist.
+                // Loading DbgEng.dll will load DbgHelp.dll as a dependency
+                //
+                NativeMethods.LoadLibrary($"{currentDir}\\DbgEng.dll");
+            }
+
+            dbgEng = NativeMethods.GetModuleHandle("DbgEng.dll");
+            if (dbgEng == IntPtr.Zero)
+            {
+                string message = "No DbgEng.dll! Configure load path";
+                MessageBox.Show(message);
+                return false;
+            }
+            return true;
+        }
+
         private void MenuItem_Click_2(object sender, RoutedEventArgs e)
         {
             int heapNum;
             long result;
+
+            if (!LoadDbgDlls())
+            {
+                return;
+            }
+
             OpenFileDialog openFileDialog = new OpenFileDialog();
             if (openFileDialog.ShowDialog() == true)
             {
@@ -487,6 +523,12 @@ namespace PoolViewer
             Environment.Exit(0);
         }
 
+        private void DllPath_Click(object sender, RoutedEventArgs e)
+        {
+            DllConfig dllConfig = new DllConfig();
+            dllConfig.Show();
+        }
+
         private void Window_Closing(object sender, CancelEventArgs e)
         {
             Environment.Exit(0);
@@ -552,6 +594,11 @@ namespace PoolViewer
             {
                 RunAsAdmin();
                 PrintLog("Failed to open PoolViewer as admin. Can't analyze machine.");
+                return;
+            }
+
+            if (!LoadDbgDlls())
+            {
                 return;
             }
 

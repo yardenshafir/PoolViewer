@@ -16,6 +16,9 @@
                 <MenuItem Header="Export to csv" Click="MenuItem_Click_1"></MenuItem>
                 <MenuItem Header="Exit" Click="MenuItem_Click_5"></MenuItem>
             </MenuItem>
+            <MenuItem Header="Options">
+                <MenuItem Header="Configure Dbg Dlls Path" Click="DllPath_Click"></MenuItem>
+            </MenuItem>
         </Menu>
         <TabControl Name="Pools" Margin="0,20,0,0">
             <TabItem Header="General">

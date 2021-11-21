@@ -2067,8 +2067,18 @@ InitializeDebugGlobals(
 )
 {
     HRESULT result;
+    HMODULE handle;
+    DebugCreateFunc debugCreate;
 
-    result = DebugCreate(__uuidof(IDebugClient), (PVOID*)&g_DebugClient);
+    handle = GetModuleHandle(L"DbgEng.dll");
+    if (handle == 0)
+    {
+        result = S_FALSE;
+        goto Exit;
+    }
+    debugCreate = (DebugCreateFunc)GetProcAddress(handle, "DebugCreate");
+
+    result = debugCreate(__uuidof(IDebugClient), (PVOID*)&g_DebugClient);
     if (!SUCCEEDED(result))
     {
         printf("DebugCreate failed with error 0x%x\n", result);

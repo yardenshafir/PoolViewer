@@ -1,0 +1,15 @@
+﻿<Window x:Class="PoolViewer.DllConfig"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:ManagedUIKitWPF"
+        mc:Ignorable="d"
+        Title="Configure Dll Path" Height="150" Width="500">
+    <Grid>
+        <TextBlock HorizontalAlignment="Left" Margin="20,15,0,0" TextWrapping="Wrap" Text="Path for DbgEng.dll and DbgHelp.dll" VerticalAlignment="Top"/>
+        <TextBox Name="DllSearchPath" Height="21" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="20,45,30,0" TextWrapping="Wrap" Width="430"/>
+        <Button Margin="0,75,65,5" Width="40" Height="21" HorizontalAlignment="Right" VerticalAlignment="Bottom" Click="OK_Button_Click" FontWeight="Bold">OK</Button>
+        <Button Margin="0,75,10,5" Width="50" Height="21" HorizontalAlignment="Right" VerticalAlignment="Bottom" Click="Cancel_Button_Click" FontWeight="Bold">Cancel</Button>
+    </Grid>
+</Window>
