@@ -1054,7 +1054,7 @@ FindPoolBlocksInLfhSubsegment (
         goto Exit;
     }
 
-    while (currentAddress + lfhBlockSize <= (ULONG_PTR)SubsegmentEnd - 0x1000)
+    while (currentAddress + lfhBlockSize <= (ULONG_PTR)SubsegmentEnd)
     {
         highlight = FALSE;
         //
