@@ -26,11 +26,11 @@
                     <TextBlock Name="heapsText" HorizontalAlignment="Left" Margin="10,10,0,0" TextWrapping="Wrap" Text="Heaps" VerticalAlignment="Top" FontWeight="Bold" Visibility="Hidden"/>
                     <DataGrid Name = "Heaps" HorizontalAlignment="Left" VerticalAlignment="Top" MaxHeight="250" Margin="10,30,0,0" SelectedItem="{Binding SelectedRow, Mode=TwoWay}" AutoGenerateColumns="False" Visibility="Hidden">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Binding="{Binding Path=Address, StringFormat={}0x{0:X8}}" Header="Address" FontWeight="Bold"/>
-                            <DataGridTextColumn Binding="{Binding Path=NodeNumber, StringFormat={}0x{0:X}}" Header="Node Number"/>
-                            <DataGridTextColumn Binding="{Binding Path=Special}" Header="Special Pool"/>
-                            <DataGridTextColumn Binding="{Binding Path=PoolType}" Header="Pool Type"/>
-                            <DataGridTextColumn Binding="{Binding Path=NumberOfAllocs, StringFormat={}0x{0:X}}" Header="Number Of Allocations"/>
+                            <DataGridTextColumn Binding="{Binding Path=Address, StringFormat={}0x{0:X8}, Mode=OneWay}" IsReadOnly="True" Header="Address" FontWeight="Bold"/>
+                            <DataGridTextColumn Binding="{Binding Path=NodeNumber, StringFormat={}0x{0:X}, Mode=OneWay}" IsReadOnly="True" Header="Node Number"/>
+                            <DataGridTextColumn Binding="{Binding Path=Special, Mode=OneWay}" IsReadOnly="True" Header="Special Pool"/>
+                            <DataGridTextColumn Binding="{Binding Path=PoolType, Mode=OneWay}" IsReadOnly="True" Header="Pool Type"/>
+                            <DataGridTextColumn Binding="{Binding Path=NumberOfAllocs, StringFormat={}0x{0:X}, Mode=OneWay}" IsReadOnly="True" Header="Number Of Allocations"/>
                         </DataGrid.Columns>
                         <DataGrid.ContextMenu>
                             <ContextMenu>
@@ -41,8 +41,8 @@
                     <TextBlock Name="tagsText" HorizontalAlignment="Left" Margin="575,10,0,0" TextWrapping="Wrap" Text="Common Tags" VerticalAlignment="Top" FontWeight="Bold" Visibility="Hidden"/>
                     <DataGrid Name = "Tags" HorizontalAlignment="Left" VerticalAlignment="Top" MaxHeight="250" Margin="575,30,0,0" AutoGenerateColumns="False" Visibility="Hidden">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Binding="{Binding Path=Key}" Header="Tag"/>
-                            <DataGridTextColumn Binding="{Binding Path=Value}" Header="Allocations"/>
+                            <DataGridTextColumn Binding="{Binding Path=Key, Mode=OneWay}" IsReadOnly="True" Header="Tag"/>
+                            <DataGridTextColumn Binding="{Binding Path=Value, Mode=OneWay}" IsReadOnly="True" Header="Allocations"/>
                         </DataGrid.Columns>
                         <DataGrid.ContextMenu>
                             <ContextMenu>
@@ -53,8 +53,8 @@
                     <TextBlock Name="SubsegText" HorizontalAlignment="Left" Margin="725,10,0,0" TextWrapping="Wrap" Text="Subsegments" VerticalAlignment="Top" FontWeight="Bold" Visibility="Hidden"/>
                     <DataGrid Name = "Subsegments" HorizontalAlignment="Left" VerticalAlignment="Top" MaxHeight="129" Margin="725,30,0,0" AutoGenerateColumns="False" Visibility="Hidden">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Binding="{Binding Path=Key}" Header="Subsegment"/>
-                            <DataGridTextColumn Binding="{Binding Path=Value}" Header="Allocations"/>
+                            <DataGridTextColumn Binding="{Binding Path=Key, Mode=OneWay}" IsReadOnly="True" Header="Subsegment" />
+                            <DataGridTextColumn Binding="{Binding Path=Value, Mode=OneWay}" IsReadOnly="True" Header="Allocations"/>
                         </DataGrid.Columns>
                         <DataGrid.ContextMenu>
                             <ContextMenu>
@@ -114,14 +114,14 @@
                     <Button Margin="10,70,5,5" Width="100" Height="21" HorizontalAlignment="Left" VerticalAlignment="Top" Click="Search_Button_Click" FontWeight="Bold">Search</Button>
                     <DataGrid Name = "Blocks"  Sorting="dg_Sorting" HorizontalAlignment="Left" VerticalAlignment="Top" MaxHeight="400" Margin="10,100,0,0" AutoGenerateColumns="False" Visibility="Hidden">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Binding="{Binding Path=Address, StringFormat={}0x{0:X8}}" Header="Address" FontWeight="Bold"/>
-                            <DataGridTextColumn Binding="{Binding Path=Heap, StringFormat={}0x{0:X8}}" Header="Heap"/>
-                            <DataGridTextColumn Binding="{Binding Path=Size, StringFormat={}0x{0:X}}" Header="Size"/>
-                            <DataGridTextColumn Binding="{Binding Path=SubsegType}" Header="Subsegment Type"/>
-                            <DataGridTextColumn Binding="{Binding Path=Tag}" Header="Tag"/>
-                            <DataGridTextColumn Binding="{Binding Path=Allocated}" Header="Allocated"/>
-                            <DataGridTextColumn Binding="{Binding Path=PoolType}" Header="Pool Type"/>
-                            <DataGridTextColumn Binding="{Binding Path=Special}" Header="Special Pool"/>
+                            <DataGridTextColumn Binding="{Binding Path=Address, StringFormat={}0x{0:X8}, Mode=OneWay}" IsReadOnly="True" Header="Address" FontWeight="Bold"/>
+                            <DataGridTextColumn Binding="{Binding Path=Heap, StringFormat={}0x{0:X8}, Mode=OneWay}" IsReadOnly="True" Header="Heap"/>
+                            <DataGridTextColumn Binding="{Binding Path=Size, StringFormat={}0x{0:X}, Mode=OneWay}" IsReadOnly="True" Header="Size"/>
+                            <DataGridTextColumn Binding="{Binding Path=SubsegType, Mode=OneWay}" IsReadOnly="True" Header="Subsegment Type"/>
+                            <DataGridTextColumn Binding="{Binding Path=Tag, Mode=OneWay}" IsReadOnly="True" Header="Tag"/>
+                            <DataGridTextColumn Binding="{Binding Path=Allocated, Mode=OneWay}" IsReadOnly="True" Header="Allocated"/>
+                            <DataGridTextColumn Binding="{Binding Path=PoolType, Mode=OneWay}" IsReadOnly="True" Header="Pool Type"/>
+                            <DataGridTextColumn Binding="{Binding Path=Special, Mode=OneWay}" IsReadOnly="True" Header="Special Pool"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
